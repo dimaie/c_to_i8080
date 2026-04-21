@@ -1,0 +1,10 @@
+# Compiled output
+*.exe
+*.obj
+*.o
+
+# Generated assembly files
+*.asm
+
+# VS Code local settings
+.vscode/

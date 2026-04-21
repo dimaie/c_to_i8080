@@ -1,0 +1,54 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "cppbuild",
+            "label": "C/C++: gcc build c_to_i8080",
+            "command": "gcc",
+            "args": [
+                "-std=c99",
+                "-g",
+                "${workspaceFolder}/src/main.c",
+                "${workspaceFolder}/src/lexer.c",
+                "${workspaceFolder}/src/parser.c",
+                "${workspaceFolder}/src/codegen.c",
+                "-o",
+                "${workspaceFolder}/c_to_i8080.exe"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "detail": "Build the C to i8080 compiler using GCC"
+        },
+        {
+            "type": "cppbuild",
+            "label": "C/C++: cl.exe build c_to_i8080",
+            "command": "cl.exe",
+            "args": [
+                "/Zi",
+                "/EHsc",
+                "/Fe:",
+                "${workspaceFolder}/c_to_i8080.exe",
+                "${workspaceFolder}/src/main.c",
+                "${workspaceFolder}/src/lexer.c",
+                "${workspaceFolder}/src/parser.c",
+                "${workspaceFolder}/src/codegen.c"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$msCompile"
+            ],
+            "group": "build",
+            "detail": "Build the C to i8080 compiler using MSVC"
+        }
+    ]
+}
