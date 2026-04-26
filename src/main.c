@@ -3,7 +3,7 @@
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s [options] <input.c> [output.asm]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [options] <input1.c> [input2.c ...] [-o output.asm]\n", argv[0]);
         fprintf(stderr, "Options:\n");
         fprintf(stderr, "  -mstack    Use stack-based memory allocation (frame pointer)\n");
         fprintf(stderr, "  -mdirect   Use direct memory addressing with shadow stack (default)\n");
@@ -15,8 +15,9 @@ int main(int argc, char **argv) {
     bool use_frame_pointer = false;
     int org_address = 0x0100;
     int stack_address = 0xFFFF;
-    const char *input_file = NULL;
-    const char *output_file = NULL;
+    int input_count = 0;
+    char *input_files[100];
+    const char *output_file = "output.asm";
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-mstack") == 0) {
@@ -27,45 +28,50 @@ int main(int argc, char **argv) {
             org_address = (int)strtol(argv[++i], NULL, 0);
         } else if (strcmp(argv[i], "-stack") == 0 && i + 1 < argc) {
             stack_address = (int)strtol(argv[++i], NULL, 0);
-        } else if (input_file == NULL) {
-            if (argv[i][0] == '-') {
-                fprintf(stderr, "Error: Unknown or malformed option '%s'\n", argv[i]);
-                return 1;
-            }
-            input_file = argv[i];
-        } else if (output_file == NULL) {
-            output_file = argv[i];
+        } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
+            output_file = argv[++i];
+        } else if (argv[i][0] == '-') {
+            fprintf(stderr, "Error: Unknown or malformed option '%s'\n", argv[i]);
+            return 1;
         } else {
-            fprintf(stderr, "Warning: Ignoring extra argument '%s'\n", argv[i]);
+            if (input_count < 100) input_files[input_count++] = argv[i];
         }
     }
 
-    if (input_file == NULL) {
-        fprintf(stderr, "Error: No input file specified\n");
-        return 1;
-    }
-    
-    if (output_file == NULL) {
-        output_file = "output.asm";
-    }
-
-     // Read input file
-    FILE *f = fopen(input_file, "rb");
-    if (!f) {
-        fprintf(stderr, "Error: Cannot open file %s\n", input_file);
+    if (input_count == 0) {
+        fprintf(stderr, "Error: No input files specified\n");
         return 1;
     }
 
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
+    // Calculate total size of all input files
+    long total_size = 0;
+    for (int i = 0; i < input_count; i++) {
+        FILE *f = fopen(input_files[i], "rb");
+        if (!f) {
+            fprintf(stderr, "Error: Cannot open file %s\n", input_files[i]);
+            return 1;
+        }
+        fseek(f, 0, SEEK_END);
+        total_size += ftell(f) + 1; // +1 for newline separation
+        fclose(f);
+    }
 
-    char *source = malloc(size + 1);
-    size_t bytes_read = fread(source, 1, size, f);
-    source[bytes_read] = '\0';
-    fclose(f);
+    // Concatenate all input files
+    char *source = malloc(total_size + 1);
+    char *ptr = source;
+    for (int i = 0; i < input_count; i++) {
+        FILE *f = fopen(input_files[i], "rb");
+        fseek(f, 0, SEEK_END);
+        long size = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        fread(ptr, 1, size, f);
+        ptr += size;
+        *ptr++ = '\n'; // Isolate files with a newline
+        fclose(f);
+    }
+    *ptr = '\0';
 
-    printf("Compiling %s to i8080 assembly...\n", input_file);
+    printf("Compiling %d file(s) to i8080 assembly...\n", input_count);
 
     // Tokenize
     int token_count;

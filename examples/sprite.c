@@ -85,13 +85,34 @@ int main() {
     frame2[14]= 960;   //      ****
     frame2[15]= 1536;  //      **
     
-    clear_gfx_ram();
+    clear_screen(0);
+    puts_at(1, 1, "VSYNC: ON ");
     
     int x = 0;
     int y = 110;
     int current_frame = 0;
+    int use_vsync = 1;
+    int toggle_cooldown = 0;
     
     while (1) {
+        int key = check_key();
+        
+        if (toggle_cooldown > 0) {
+            toggle_cooldown = toggle_cooldown - 1;
+        } else if (key != 0) {
+            // Toggle VSYNC and ignore further key codes (like PS/2 break codes) for 30 frames
+            use_vsync = use_vsync ^ 1;
+            if (use_vsync) {
+                puts_at(1, 1, "VSYNC: ON ");
+            } else {
+                puts_at(1, 1, "VSYNC: OFF");
+            }
+            toggle_cooldown = 30; 
+        }
+
+        // Wait for VBLANK to ensure smooth, tear-free rendering at 60 FPS
+        if (use_vsync) wait_vblank();
+        
         // 1. Erase old sprite
         if (current_frame == 0) draw_sprite(x, y, frame1, 0);
         if (current_frame == 1) draw_sprite(x, y, frame2, 0);
@@ -106,11 +127,6 @@ int main() {
         // 4. Draw new sprite
         if (current_frame == 0) draw_sprite(x, y, frame1, 1);
         if (current_frame == 1) draw_sprite(x, y, frame2, 1);
-        
-        // 5. Short delay
-        for (int d = 0; d < 300; d = d + 1) {
-            asm { NOP }
-        }
     }
     return 0;
 }

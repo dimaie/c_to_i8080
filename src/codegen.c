@@ -10,6 +10,7 @@ Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool i
     sym->is_16bit = is_16bit;
     sym->array_size = array_size;
     int count = array_size > 0 ? array_size : 1;
+
     if (!is_global) {
         // Allocate offset on stack from frame pointer
         symtab->next_address += (is_16bit ? 2 : 1) * count;
@@ -747,7 +748,10 @@ static void collect_local_vars(ASTNode *node) {
     if (node->type == AST_VARDECL) {
         bool is_pointer = (node->value[0] == '*');
         const char *var_name = is_pointer ? node->value + 1 : node->value;
-        add_symbol(compiler->symtab, var_name, false, is_pointer, node->datatype == 2, node->array_size);
+        Symbol *existing = find_symbol(compiler->symtab, var_name);
+        if (!existing || existing->is_global) {
+            add_symbol(compiler->symtab, var_name, false, is_pointer, node->datatype == 2, node->array_size);
+        }
     }
     for (int i = 0; i < node->child_count; i++) {
         collect_local_vars(node->children[i]);
@@ -932,30 +936,65 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
     compiler->uses_div = false;
     compiler->uses_mod = false;
 
-    emit("; Generated i8080 assembly code\n");
-    emit("; Compiled from C source\n\n");
-
-    emit("\tORG %04XH\n\n", compiler->org_address);
-
-    // Entry point
-    emit("\t; Entry point\n");
-    emit("\tLXI SP, STACK_TOP\t; Initialize stack pointer\n");
-    if (compiler->use_frame_pointer) {
-        emit("\tLXI H, 0\n");
-        emit("\tSHLD __FP\t; Initialize frame pointer\n");
+    bool has_custom_crt = false;
+    for (int i = 0; i < ast->child_count; i++) {
+        if (ast->children[i]->type == AST_ASM) {
+            has_custom_crt = true;
+            break;
+        }
     }
-    emit("\tCALL main\n");
-    emit("\tHLT\n\n");
+
+    time_t t = time(NULL);
+    struct tm *tm_info = localtime(&t);
+    char time_str[64];
+    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm_info);
+
+    emit("; Generated i8080 assembly code\n");
+    emit("; Compiled from C source on %s\n\n", time_str);
+
+    if (!has_custom_crt) {
+        emit("\tORG %04XH\n\n", compiler->org_address);
+        emit("\t; Entry point\n");
+        emit("\tLXI SP, STACK_TOP\t; Initialize stack pointer\n");
+        if (compiler->use_frame_pointer) {
+            emit("\tLXI H, 0\n");
+            emit("\tSHLD __FP\t; Initialize frame pointer\n");
+        }
+        emit("\tCALL main\n");
+        emit("\tHLT\n\n");
+    } else {
+        for (int i = 0; i < ast->child_count; i++) {
+            if (ast->children[i]->type == AST_ASM) {
+                emit("; Custom CRT / Global Assembly\n");
+                emit("%s\n\n", ast->children[i]->value);
+            }
+        }
+    }
 
     // Dead Code Elimination (Reachability Analysis)
     ASTNode *main_func = find_function(ast, "main");
     if (main_func) {
         mark_function_used(ast, main_func);
-    } else {
+    } else if (!has_custom_crt) {
         // Library mode fallback: if no main, assume all functions are used
         for (int i = 0; i < ast->child_count; i++) {
             if (ast->children[i]->type == AST_FUNCTION) {
                 ast->children[i]->is_used = true;
+            }
+        }
+    }
+
+    // Ensure functions called directly from the custom CRT are protected from DCE
+    if (has_custom_crt) {
+        for (int i = 0; i < ast->child_count; i++) {
+            if (ast->children[i]->type == AST_ASM) {
+                for (int j = 0; j < ast->child_count; j++) {
+                    if (ast->children[j]->type == AST_FUNCTION) {
+                        if (strstr(ast->children[i]->value, ast->children[j]->value) != NULL) {
+                            mark_function_used(ast, ast->children[j]);
+                        }
+                    }
+                }
             }
         }
     }
@@ -1041,9 +1080,11 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
     if (compiler->use_frame_pointer) {
         emit("__FP:\tDS 2\t; Frame pointer for stack variables\n\n");
     }
-    emit("; Stack space (still needed for CALL/RET and temporary values)\n");
-    emit("\tORG %04XH\n", compiler->stack_address);
-    emit("STACK_TOP:\n");
+    if (!has_custom_crt) {
+        emit("; Stack space (still needed for CALL/RET and temporary values)\n");
+        emit("\tORG %04XH\n", compiler->stack_address);
+        emit("STACK_TOP:\n");
+    }
 
     free(compiler->symtab);
     free(compiler);

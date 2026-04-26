@@ -14,16 +14,6 @@ int divide(int a, int b) {
     return res;
 }
 
-// Clears the 9600 bytes of Graphics RAM using native pointers
-int clear_gfx_ram() {
-    int *vram = 16384; // Base address 0x4000
-    for (int i = 0; i < 4800; i = i + 1) {
-        *vram = 0;
-        vram = vram + 2; 
-    }
-    return 0;
-}
-
 // Sets or clears a single pixel safely 
 int put_pixel(int x, int y, int color) {
     // Bounds checking to prevent VRAM overflow
@@ -112,52 +102,6 @@ int get_sin(int a) {
 // Cosine is just sine shifted by 90 degrees (8 steps out of 32)
 int get_cos(int a) {
     return get_sin(a + 8);
-}
-
-// Reads a scan code from the PS/2 keyboard (Non-blocking)
-// Uses SAP-3 Port 01H (Status) and 00H (Data).
-int get_key() {
-    int key = 0;
-    asm {
-        IN 01H                  ; Read keyboard status (Port 01H)
-        ANI 01H                 ; Check Data Ready bit (Bit 0)
-        JZ NO_KEY               ; If 0, no key is ready to be read
-        
-        IN 00H                  ; Read keyboard data (Port 00H)
-        STA __VAR_key           ; Store to local C variable (compiler auto-prefixes function name)
-        
-    NO_KEY:
-    }
-    return key;
-}
-
-// Writes a single character to the specified X/Y coordinates in Text RAM.
-// Top-Left is (0, 0). Max X is 79, Max Y is 29.
-int put_char_at(int x, int y, int c) {
-    // Base address 0xA000 (40960) + Y * 80 + X
-    // Using bitwise shifts for speed: Y * 80 = (Y << 6) + (Y << 4)
-    int vram_addr = 40960 + (y << 6) + (y << 4) + x;
-    
-    // Write exactly 8-bits to prevent overwriting the adjacent character
-    asm {
-        LHLD __VAR_vram_addr  ; Load the calculated 16-bit address into HL
-        LDA  __VAR_c          ; Load the low byte of the character into A
-        MOV  M, A             ; Store character in Text RAM
-    }
-    
-    return 0;
-}
-
-// Writes a null-terminated string to the Text RAM
-int puts_at(int x, int y, char *str) {
-    int c = *str & 255;
-    while (c) {
-        put_char_at(x, y, c);
-        x = x + 1;
-        str = str + 1;
-        c = *str & 255;
-    }
-    return 0;
 }
 
 // Updates the direction text label on the screen
@@ -260,7 +204,7 @@ int main() {
     int old_px[8];
     int old_py[8];
     
-    clear_gfx_ram();
+    clear_screen(0); // 0 = Clear both text and graphics layers
     
     // Draw static "DIR: " label at top left (x=1, y=1)
     puts_at(1, 1, "DIR: ");
@@ -272,7 +216,7 @@ int main() {
     }
 
     while (1) {
-        int key = get_key();
+        int key = check_key();
         
         // Use raw PS/2 Scan Codes from the hardware (Port 0x00)
         // W (29) or Up Arrow (117)
@@ -299,8 +243,8 @@ int main() {
         project_vertex(6,  30,  30,  30, ax, ay, px, py);
         project_vertex(7, -30,  30,  30, ax, ay, px, py);
         
-        draw_cube_edges(0, 1, px, py, old_px, old_py); 
-        draw_cube_edges(1, 0, px, py, old_px, old_py);
+        draw_cube_edges(0, 1, px, py, old_px, old_py); // Erase Old Cube
+        draw_cube_edges(1, 0, px, py, old_px, old_py); // Draw New Cube
         save_old_coordinates(px, py, old_px, old_py);
         
         ax = ax + ax_step;

@@ -13,6 +13,7 @@
 #include <ctype.h>
 #include <stdbool.h>
 #include <stdarg.h>
+#include <time.h>
 
 // Token types
 typedef enum {

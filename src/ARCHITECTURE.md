@@ -19,8 +19,8 @@ The hardware is based on the OneChipBook laptop. `OneChipBook12-TechRef.pdf` is 
 - `rst`: Internal reset (active-high).
 
 ## Memory Map
-- `0x0000` - `0x0BFF`: 3KB Program ROM
-- `0x0C00` - `0x1FFF`: Unused
+- `0x0000` - `0x0DF3`: 3572 Bytes Program ROM
+- `0x0DF4` - `0x1FFF`: Unused
 - `0x2000` - `0x3FFF`: 8KB Program RAM
 - `0x4000` - `0x657F`: 9600 Bytes Video Graphics RAM (320x240 monochrome, Read/Write)
 - `0x6580` - `0x9FFF`: Unused
@@ -43,9 +43,16 @@ The hardware is based on the OneChipBook laptop. `OneChipBook12-TechRef.pdf` is 
 ## System Monitor (ROM) Specification
 A ROM-based system monitor program is being developed gradually to provide basic debugging, execution, and API functionalities.
 
-### Core APIs
-- **Keyboard Input:** Routines to gracefully read and buffer characters from the PS/2 keyboard.
-- **Display Output:** Routines to render characters and strings to the VGA Text RAM, handling the cursor and line wrapping.
+### C-Compiler ROM API (Jump Table)
+The monitor provides a stable API for compiled C programs or user assembly routines. Arguments are passed via the hardware stack (Right-to-Left, 16-bit per argument, Caller Cleanup). Return values are placed in the `HL` register pair (or `L` for 8-bit returns).
+
+- `0x0010`: `void print_char(int c)` - Prints a character to Text RAM and advances the hardware cursor.
+- `0x0013`: `int read_key()` - Blocks and returns the ASCII value of the next key pressed.
+- `0x0016`: `void clear_screen(int layer)` - Clears the screen (layer: 0 = both, 1 = text, 2 = graphics).
+- `0x0019`: `void print_char_xy(int c, int x, int y)` - Draws a character directly to specific Text RAM coordinates.
+- `0x001C`: `int read_char_xy(int x, int y)` - Reads the character currently at the specified Text RAM coordinates.
+- `0x001F`: `int read_pixel_xy(int x, int y)` - Reads the pixel state (0 or 1) at the specified Graphics RAM coordinates.
+- `0x0022`: `int check_key(void)` - Non-blocking check of the PS/2 keyboard. Returns the scan code, or 0 if empty.
 
 ### Monitor Commands
 - `Dxxxx[,yyyy]` - **Dump Memory:** Displays the memory contents starting at hex address `xxxx`. If `yyyy` is provided, dumps the range up to `yyyy`.

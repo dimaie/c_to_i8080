@@ -462,6 +462,9 @@ static ASTNode* parse_function() {
         next();
     }
     next();
+    if (match(TOK_STAR)) {
+        next();
+    }
 
     Token *name = expect(TOK_IDENT);
     ASTNode *func = create_node(AST_FUNCTION, name->value);
@@ -525,11 +528,21 @@ ASTNode* parse(Token *tokens, int token_count) {
     ASTNode *program = create_node(AST_PROGRAM, NULL);
 
     while (!match(TOK_EOF)) {
-        ASTNode *func = parse_function();
-        if (func) {
-            add_child(program, func);
+        if (match(TOK_ASM)) {
+            next(); // consume 'asm'
+            expect(TOK_LBRACE);
+            Token *asm_tok = expect(TOK_STRING);
+            ASTNode *asm_node = create_node(AST_ASM, asm_tok->value);
+            expect(TOK_RBRACE);
+            add_child(program, asm_node);
         } else {
-            break;
+            ASTNode *func = parse_function();
+            if (func) {
+                add_child(program, func);
+            } else {
+                fprintf(stderr, "Error: Unexpected token '%s' at top level (line %d)\n", peek()->value ? peek()->value : "EOF", peek()->line);
+                exit(1);
+            }
         }
     }
 
