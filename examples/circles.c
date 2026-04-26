@@ -1,72 +1,23 @@
-// Clears the 9600 bytes (0x2580) of Graphics RAM natively via HL and DE registers
+// Clears the 9600 bytes (0x2580) of Graphics RAM natively using C pointers
 int clear_gfx_ram() {
-    asm {
-        LXI H, 4000H
-        LXI D, 2580H
-    CLEAR_LOOP:
-        MVI M, 00H
-        INX H
-        DCX D
-        MOV A, D
-        ORA E
-        JNZ CLEAR_LOOP
+    int *vram = 16384; // Base address 0x4000
+    
+    // Clear 2 bytes at a time (9600 bytes / 2 = 4800)
+    for (int i = 0; i < 4800; i = i + 1) {
+        *vram = 0;
+        vram = vram + 2; // Pointer arithmetic doesn't scale by type, so we add 2 explicitly
     }
     return 0;
 }
 
-// Sets a single pixel handling the SAP-3's MSB-first packing using inline asm.
-// Circumvents the 8-bit math limitations by computing offsets natively.
+// Sets a single pixel handling the SAP-3's MSB-first packing.
+// Leverages 16-bit math compiler support and native bitwise operators.
 int put_pixel(int x, int y) {
-    int bit_mask;
-    int rem;
+    int *vram_addr = 16384 + (y << 5) + (y << 3) + (x >> 3); // Emulate y * 40 + x / 8
+    int rem = x & 7; // Calculate modulo using bitwise AND (much faster than division loop)
+    int mask = 128 >> rem;
     
-    asm {
-        LDA __VAR_x
-        ANI 07H
-        STA __VAR_rem
-    }
-    
-    if (rem == 0) bit_mask = 128;
-    if (rem == 1) bit_mask = 64;
-    if (rem == 2) bit_mask = 32;
-    if (rem == 3) bit_mask = 16;
-    if (rem == 4) bit_mask = 8;
-    if (rem == 5) bit_mask = 4;
-    if (rem == 6) bit_mask = 2;
-    if (rem == 7) bit_mask = 1;
-    
-    asm {
-        ; Calculate y * 40 + x / 8
-        LXI H, 0
-        LDA __VAR_y
-        MOV C, A
-        MVI B, 0
-        MVI D, 40
-    MUL_LOOP:
-        MOV A, C
-        ORA A
-        JZ MUL_DONE
-        DAD D
-        DCR C
-        JMP MUL_LOOP
-    MUL_DONE:
-        
-        LXI D, 4000H
-        DAD D
-        
-        LDA __VAR_x
-        RRC
-        RRC
-        RRC
-        ANI 1FH
-        MOV E, A
-        MVI D, 0
-        DAD D
-        
-        LDA __VAR_bit_mask
-        ORA M
-        MOV M, A
-    }
+    *vram_addr = *vram_addr | mask;
     return 0;
 }
 
@@ -89,7 +40,6 @@ int draw_circle(int xc, int yc, int r) {
     int x = 0;
     int y = r;
     int d = 1 - r;
-    int dx;
     
     draw_circle_points(xc, yc, x, y);
     
@@ -97,8 +47,7 @@ int draw_circle(int xc, int yc, int r) {
         x = x + 1;
         if (0 < d) {
             y = y - 1;
-            dx = x - y;
-            d = d + dx + dx + 5;
+            d = d + x - y + x - y + 5;
         } else {
             d = d + x + x + 3;
         }
@@ -111,12 +60,11 @@ int main() {
     int xc = 160;
     int yc = 120;
     int r = 20;
-    int i;
     
     clear_gfx_ram();
     
     // Draw 10 concentric circles, increasing radius by 5 each time
-    for (i = 0; i < 10; i = i + 1) {
+    for (int i = 0; i < 10; i = i + 1) {
         draw_circle(xc, yc, r);
         r = r + 5;
     }

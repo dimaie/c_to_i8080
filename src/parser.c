@@ -4,6 +4,9 @@ ASTNode* create_node(ASTNodeType type, const char *value) {
     ASTNode *node = malloc(sizeof(ASTNode));
     node->type = type;
     node->value = value ? strdup(value) : NULL;
+    node->datatype = 2; // Default to 16-bit
+    node->array_size = 0;
+    node->is_used = false;
     node->children = NULL;
     node->child_count = 0;
     node->child_capacity = 0;
@@ -49,6 +52,10 @@ static ASTNode* parse_primary() {
         Token *tok = next();
         return create_node(AST_NUMBER, tok->value);
     }
+    if (match(TOK_STRING)) {
+        Token *tok = next();
+        return create_node(AST_STRING, tok->value);
+    }
     if (match(TOK_IDENT)) {
         Token *tok = next();
         if (match(TOK_LPAREN)) {
@@ -64,6 +71,12 @@ static ASTNode* parse_primary() {
             }
             expect(TOK_RPAREN);
             return call;
+        } else if (match(TOK_LBRACKET)) {
+            next(); // consume '['
+            ASTNode *access = create_node(AST_ARRAY_ACCESS, tok->value);
+            add_child(access, parse_expression());
+            expect(TOK_RBRACKET);
+            return access;
         }
         return create_node(AST_IDENT, tok->value);
     }
@@ -126,13 +139,25 @@ static ASTNode* parse_additive() {
     return left;
 }
 
-static ASTNode* parse_relational() {
+static ASTNode* parse_shift() {
     ASTNode *left = parse_additive();
-    while (match(TOK_LT) || match(TOK_LE) || match(TOK_GT) || match(TOK_GE)) {
+    while (match(TOK_SHL) || match(TOK_SHR)) {
         Token *op = next();
         ASTNode *node = create_node(AST_BINARY_OP, op->value);
         add_child(node, left);
         add_child(node, parse_additive());
+        left = node;
+    }
+    return left;
+}
+
+static ASTNode* parse_relational() {
+    ASTNode *left = parse_shift();
+    while (match(TOK_LT) || match(TOK_LE) || match(TOK_GT) || match(TOK_GE)) {
+        Token *op = next();
+        ASTNode *node = create_node(AST_BINARY_OP, op->value);
+        add_child(node, left);
+        add_child(node, parse_shift());
         left = node;
     }
     return left;
@@ -150,8 +175,68 @@ static ASTNode* parse_equality() {
     return left;
 }
 
-static ASTNode* parse_assignment() {
+static ASTNode* parse_bitwise_and() {
     ASTNode *left = parse_equality();
+    while (match(TOK_AMPERSAND)) {
+        Token *op = next();
+        ASTNode *node = create_node(AST_BINARY_OP, op->value);
+        add_child(node, left);
+        add_child(node, parse_equality());
+        left = node;
+    }
+    return left;
+}
+
+static ASTNode* parse_bitwise_xor() {
+    ASTNode *left = parse_bitwise_and();
+    while (match(TOK_CARET)) {
+        Token *op = next();
+        ASTNode *node = create_node(AST_BINARY_OP, op->value);
+        add_child(node, left);
+        add_child(node, parse_bitwise_and());
+        left = node;
+    }
+    return left;
+}
+
+static ASTNode* parse_bitwise_or() {
+    ASTNode *left = parse_bitwise_xor();
+    while (match(TOK_PIPE)) {
+        Token *op = next();
+        ASTNode *node = create_node(AST_BINARY_OP, op->value);
+        add_child(node, left);
+        add_child(node, parse_bitwise_xor());
+        left = node;
+    }
+    return left;
+}
+
+static ASTNode* parse_logical_and() {
+    ASTNode *left = parse_bitwise_or();
+    while (match(TOK_AND)) {
+        Token *op = next();
+        ASTNode *node = create_node(AST_BINARY_OP, op->value);
+        add_child(node, left);
+        add_child(node, parse_bitwise_or());
+        left = node;
+    }
+    return left;
+}
+
+static ASTNode* parse_logical_or() {
+    ASTNode *left = parse_logical_and();
+    while (match(TOK_OR)) {
+        Token *op = next();
+        ASTNode *node = create_node(AST_BINARY_OP, op->value);
+        add_child(node, left);
+        add_child(node, parse_logical_and());
+        left = node;
+    }
+    return left;
+}
+
+static ASTNode* parse_assignment() {
+    ASTNode *left = parse_logical_or();
     if (match(TOK_ASSIGN)) {
         next();
         ASTNode *node = create_node(AST_ASSIGN, "=");
@@ -178,22 +263,39 @@ static ASTNode* parse_block() {
 
 static ASTNode* parse_statement() {
     // Variable declaration
-    if (match(TOK_INT) || match(TOK_CHAR)) {
-        next();
+    if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR)) {
+        bool is_16bit = true;
+        if (match(TOK_SHORT)) {
+            is_16bit = false;
+            next();
+            if (match(TOK_INT)) next(); // optional "short int"
+        } else if (match(TOK_CHAR)) {
+            is_16bit = false;
+            next();
+        } else {
+            next();
+        }
         // Check for pointer declaration
         bool is_pointer = false;
         if (match(TOK_STAR)) {
             is_pointer = true;
+            is_16bit = true; // Pointers are always 16-bit
             next();
         }
         Token *name = expect(TOK_IDENT);
         ASTNode *vardecl = create_node(AST_VARDECL, name->value);
+        vardecl->datatype = is_16bit ? 2 : 1;
         // Store pointer info in the node value (hacky but simple)
         if (is_pointer) {
             char *ptr_name = malloc(strlen(name->value) + 2);
             sprintf(ptr_name, "*%s", name->value);
             free(vardecl->value);
             vardecl->value = ptr_name;
+        } else if (match(TOK_LBRACKET)) {
+            next();
+            Token *num = expect(TOK_NUMBER);
+            vardecl->array_size = atoi(num->value);
+            expect(TOK_RBRACKET);
         }
         if (match(TOK_ASSIGN)) {
             next();
@@ -273,20 +375,37 @@ static ASTNode* parse_statement() {
         ASTNode *for_stmt = create_node(AST_FOR, NULL);
 
         // Initialization (can be variable declaration or expression)
-        if (match(TOK_INT) || match(TOK_CHAR)) {
-            next();
+        if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR)) {
+            bool is_16bit = true;
+            if (match(TOK_SHORT)) {
+                is_16bit = false;
+                next();
+                if (match(TOK_INT)) next(); // optional "short int"
+            } else if (match(TOK_CHAR)) {
+                is_16bit = false;
+                next();
+            } else {
+                next();
+            }
             bool is_pointer = false;
             if (match(TOK_STAR)) {
                 is_pointer = true;
+                is_16bit = true;
                 next();
             }
             Token *name = expect(TOK_IDENT);
             ASTNode *vardecl = create_node(AST_VARDECL, name->value);
+            vardecl->datatype = is_16bit ? 2 : 1;
             if (is_pointer) {
                 char *ptr_name = malloc(strlen(name->value) + 2);
                 sprintf(ptr_name, "*%s", name->value);
                 free(vardecl->value);
                 vardecl->value = ptr_name;
+            } else if (match(TOK_LBRACKET)) {
+                next();
+                Token *num = expect(TOK_NUMBER);
+                vardecl->array_size = atoi(num->value);
+                expect(TOK_RBRACKET);
             }
             if (match(TOK_ASSIGN)) {
                 next();
@@ -336,8 +455,11 @@ static ASTNode* parse_statement() {
 
 static ASTNode* parse_function() {
     // Return type
-    if (!match(TOK_INT) && !match(TOK_CHAR) && !match(TOK_VOID)) {
+    if (!match(TOK_INT) && !match(TOK_SHORT) && !match(TOK_CHAR) && !match(TOK_VOID)) {
         return NULL;
+    }
+    if (match(TOK_SHORT)) {
+        next();
     }
     next();
 
@@ -345,9 +467,52 @@ static ASTNode* parse_function() {
     ASTNode *func = create_node(AST_FUNCTION, name->value);
 
     expect(TOK_LPAREN);
-    // Parse parameters (simplified - just skip them for now)
     while (!match(TOK_RPAREN) && !match(TOK_EOF)) {
-        next();
+        if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR)) {
+            bool is_16bit = true;
+            if (match(TOK_SHORT)) {
+                is_16bit = false;
+                next();
+                if (match(TOK_INT)) next(); // optional "short int"
+            } else if (match(TOK_CHAR)) {
+                is_16bit = false;
+                next();
+            } else {
+                next();
+            }
+            bool is_pointer = false;
+            if (match(TOK_STAR)) {
+                is_pointer = true;
+                is_16bit = true; // Pointers are always 16-bit
+                next();
+            }
+            Token *pname = expect(TOK_IDENT);
+            ASTNode *param = create_node(AST_VARDECL, pname->value);
+            param->datatype = is_16bit ? 2 : 1;
+            if (is_pointer) {
+                char *ptr_name = malloc(strlen(pname->value) + 2);
+                sprintf(ptr_name, "*%s", pname->value);
+                free(param->value);
+                param->value = ptr_name;
+            } else if (match(TOK_LBRACKET)) {
+                next();
+                if (match(TOK_NUMBER)) next(); // Skip optional size
+                expect(TOK_RBRACKET);
+                char *ptr_name = malloc(strlen(pname->value) + 2);
+                sprintf(ptr_name, "*%s", pname->value);
+                free(param->value);
+                param->value = ptr_name;
+            }
+            add_child(func, param);
+        } else {
+            fprintf(stderr, "Expected parameter type at line %d\n", peek()->line);
+            exit(1);
+        }
+        if (match(TOK_COMMA)) {
+            next();
+        } else {
+            break;
+        }
     }
     expect(TOK_RPAREN);
 

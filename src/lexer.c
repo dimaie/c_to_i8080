@@ -1,7 +1,7 @@
 #include "c_to_i8080.h"
 
 static bool is_keyword(const char *str) {
-    const char *keywords[] = {"int", "char", "void", "return", "if", "else", "while", "for", "asm", NULL};
+    const char *keywords[] = {"int", "short", "char", "void", "return", "if", "else", "while", "for", "do", "asm", NULL};
     for (int i = 0; keywords[i]; i++) {
         if (strcmp(str, keywords[i]) == 0) return true;
     }
@@ -10,6 +10,7 @@ static bool is_keyword(const char *str) {
 
 static TokenType get_keyword_type(const char *str) {
     if (strcmp(str, "int") == 0) return TOK_INT;
+    if (strcmp(str, "short") == 0) return TOK_SHORT;
     if (strcmp(str, "char") == 0) return TOK_CHAR;
     if (strcmp(str, "void") == 0) return TOK_VOID;
     if (strcmp(str, "return") == 0) return TOK_RETURN;
@@ -192,6 +193,18 @@ Token* tokenize(const char *source, int *token_count) {
         if (*p == '|' && *(p + 1) == '|') {
             tok->type = TOK_OR;
             tok->value = strdup("||");
+            p += 2;
+            continue;
+        }
+        if (*p == '<' && *(p + 1) == '<') {
+            tok->type = TOK_SHL;
+            tok->value = strdup("<<");
+            p += 2;
+            continue;
+        }
+        if (*p == '>' && *(p + 1) == '>') {
+            tok->type = TOK_SHR;
+            tok->value = strdup(">>");
             p += 2;
             continue;
         }
