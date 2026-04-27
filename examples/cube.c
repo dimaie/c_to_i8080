@@ -18,12 +18,12 @@ int divide(int a, int b) {
 int put_pixel(int x, int y, int color) {
     // Bounds checking to prevent VRAM overflow
     if (x < 0) return 0;
-    if (x >= 320) return 0;
+    if (x >= 256) return 0;
     if (y < 0) return 0;
     if (y >= 240) return 0;
     
     // Calculate native memory offset
-    int *vram_addr = 16384 + (y << 5) + (y << 3) + (x >> 3);
+    int *vram_addr = 16384 + (y << 5) + (x >> 3);
     int rem = x & 7; // Fast modulo 8
     int mask = 128 >> rem;
     
@@ -137,9 +137,9 @@ int project_vertex(int idx, int x, int y, int z, int ax, int ay, int *px_arr, in
     int y1 = divide(y * cos_x - z1 * sin_x, 100);
     int z2 = divide(z1 * cos_x + y * sin_x, 100);
 
-    // Apply depth perspective and map to screen center (160x120)
+    // Apply depth perspective and map to screen center (128x120)
     int z_dist = z2 + 150;
-    px_arr[idx] = divide(x1 * 128, z_dist) + 160;
+    px_arr[idx] = divide(x1 * 128, z_dist) + 128;
     py_arr[idx] = divide(y1 * 128, z_dist) + 120;
 
     return 0;

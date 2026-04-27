@@ -1,7 +1,7 @@
-// Clears the 9600 bytes of Graphics RAM using native pointers
+// Clears the 7680 bytes of Graphics RAM using native pointers
 int clear_gfx_ram() {
     int *vram = 16384; // Base address 0x4000
-    for (int i = 0; i < 4800; i = i + 1) {
+    for (int i = 0; i < 3840; i = i + 1) {
         *vram = 0;
         vram = vram + 2; 
     }
@@ -11,11 +11,11 @@ int clear_gfx_ram() {
 // Sets or clears a single pixel safely 
 int put_pixel(int x, int y, int color) {
     if (x < 0) return 0;
-    if (x >= 320) return 0;
+    if (x >= 256) return 0;
     if (y < 0) return 0;
     if (y >= 240) return 0;
     
-    int *vram_addr = 16384 + (y << 5) + (y << 3) + (x >> 3);
+    int *vram_addr = 16384 + (y << 5) + (x >> 3);
     int rem = x & 7;
     int mask = 128 >> rem;
     
@@ -119,7 +119,7 @@ int main() {
         
         // 2. Update position
         x = x + 6;
-        if (x > 320) x = -16;
+        if (x > 256) x = -16;
         
         // 3. Toggle animation frame
         current_frame = current_frame ^ 1;
