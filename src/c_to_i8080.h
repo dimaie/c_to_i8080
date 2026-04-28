@@ -18,7 +18,7 @@
 // Token types
 typedef enum {
     TOK_EOF,
-    TOK_INT, TOK_SHORT, TOK_CHAR, TOK_VOID, TOK_RETURN, TOK_IF, TOK_ELSE, TOK_WHILE, TOK_FOR, TOK_DO, TOK_ASM, TOK_BREAK,
+    TOK_INT, TOK_SHORT, TOK_CHAR, TOK_VOID, TOK_RETURN, TOK_IF, TOK_ELSE, TOK_WHILE, TOK_FOR, TOK_DO, TOK_ASM, TOK_BREAK, TOK_REG, TOK_CONTINUE,
     TOK_IDENT, TOK_NUMBER, TOK_STRING,
     TOK_LPAREN, TOK_RPAREN, TOK_LBRACE, TOK_RBRACE, TOK_LBRACKET, TOK_RBRACKET,
     TOK_SEMICOLON, TOK_COMMA, TOK_ASSIGN,
@@ -58,7 +58,8 @@ typedef enum {
     AST_DEREF,      // *ptr (dereference)
     AST_ADDROF,     // &var (address-of)
     AST_ASM,        // asm { ... } (inline assembly)
-    AST_BREAK       // break;
+    AST_BREAK,      // break;
+    AST_CONTINUE    // continue;
 } ASTNodeType;
 
 typedef struct ASTNode {
@@ -66,6 +67,7 @@ typedef struct ASTNode {
     char *value;
     int datatype;     // 1 for 8-bit, 2 for 16-bit
     int array_size;   // Size of the array (0 if not an array)
+    bool is_reg;      // True if variable is declared with the 'reg' keyword
     bool is_used;     // Track if function is used (Dead Code Elimination)
     struct ASTNode **children;
     int child_count;
@@ -80,6 +82,7 @@ typedef struct Symbol {
     bool is_pointer;  // Whether this variable is a pointer type
     bool is_16bit;    // True for int/pointers, False for short/char
     int array_size;   // Size of the array (0 if not an array)
+    bool is_reg;      // True if variable is allocated to a hardware register
     struct Symbol *next;
 } Symbol;
 
@@ -104,6 +107,8 @@ typedef struct {
     int org_address; // Starting memory address
     int stack_address; // Top of the stack address
     int current_break_label; // Label to jump to on 'break'
+    int current_continue_label; // Label to jump to on 'continue'
+    bool uses_bc; // Track if the BC register is used by a local variable
 } Compiler;
 
 // Lexer functions
@@ -120,7 +125,7 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
 // Utility functions
 ASTNode* create_node(ASTNodeType type, const char *value);
 void add_child(ASTNode *parent, ASTNode *child);
-Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool is_pointer, bool is_16bit, int array_size);
+Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool is_pointer, bool is_16bit, int array_size, bool is_reg);
 Symbol* find_symbol(SymbolTable *symtab, const char *name);
 
 #endif // C_TO_I8080_H

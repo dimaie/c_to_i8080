@@ -14,29 +14,35 @@ int divide(int a, int b) {
     return res;
 }
 
-// Safe signed multiplication wrapper using hardware mul8
+// Safe signed multiplication wrapper using native hardware '*'
 int multiply(int a, int b) {
     int sign = 0;
     if (a < 0) { a = -a; sign = sign ^ 1; }
     if (b < 0) { b = -b; sign = sign ^ 1; }
-    int res = mul8(a, b);
+    int res = a * b;
     if (sign) return -res;
     return res;
 }
 
-// High-speed 32-step Sine Lookup Table (sin * 100)
+// High-speed 128-step Sine Lookup Table (sin * 100)
 int get_sin(int a) {
-    while (a < 0) a = a + 32;
-    while (a >= 32) a = a - 32;
+    // Natively wrap positive and negative angles using bitwise AND!
+    a = a & 127;
     
     int res;
     asm {
         JMP SKIP_SIN_TABLE
     SIN_TABLE:
-        DB 0, 20, 38, 56, 71, 83, 92, 98, 100, 98, 92, 83, 71, 56, 38, 20
-        DB 0, 236, 218, 200, 185, 173, 164, 158, 156, 158, 164, 173, 185, 200, 218, 236
+        DB 0, 5, 10, 15, 20, 24, 29, 34, 38, 43, 47, 51, 56, 60, 63, 67
+        DB 71, 74, 77, 80, 83, 86, 88, 90, 92, 94, 96, 97, 98, 99, 100, 100
+        DB 100, 100, 100, 99, 98, 97, 96, 94, 92, 90, 88, 86, 83, 80, 77, 74
+        DB 71, 67, 63, 60, 56, 51, 47, 43, 38, 34, 29, 24, 20, 15, 10, 5
+        DB 0, 251, 246, 241, 236, 232, 227, 222, 218, 213, 209, 205, 200, 196, 193, 189
+        DB 185, 182, 179, 176, 173, 170, 168, 166, 164, 162, 160, 159, 158, 157, 156, 156
+        DB 156, 156, 156, 157, 158, 159, 160, 162, 164, 166, 168, 170, 173, 176, 179, 182
+        DB 185, 189, 193, 196, 200, 205, 209, 213, 218, 222, 227, 232, 236, 241, 246, 251
     SKIP_SIN_TABLE:
-        LHLD __VAR_a      ; Load 'a' into HL (0-31)
+        LHLD __VAR_a      ; Load 'a' into HL (0-127)
         LXI D, SIN_TABLE  ; Load table base address
         DAD D             ; HL = SIN_TABLE + a
         MOV L, M          ; Load the byte at that address
@@ -51,9 +57,9 @@ int get_sin(int a) {
     return res;
 }
 
-// Cosine is just sine shifted by 90 degrees (8 steps out of 32)
+// Cosine is just sine shifted by 90 degrees (32 steps out of 128)
 int get_cos(int a) {
-    return get_sin(a + 8);
+    return get_sin(a + 32);
 }
 
 // Updates the direction text label on the screen
@@ -68,7 +74,7 @@ int update_dir_text(int dir) {
 
 // Caches the newly projected frame into the 'old' buffer for erasing next loop
 int save_old_coordinates(int *px, int *py, int *old_px, int *old_py) {
-    for (int i = 0; i < 8; i = i + 1) {
+    for (reg int i = 0; i < 8; i = i + 1) {
         old_px[i] = px[i];
         old_py[i] = py[i];
     }
@@ -162,7 +168,7 @@ int main() {
     puts_at(1, 1, "DIR: ");
 
     // Initialize old coordinates to 0 to prevent erratic first-frame erasure
-    for (int i = 0; i < 8; i = i + 1) {
+    for (reg int i = 0; i < 8; i = i + 1) {
         old_px[i] = 0;
         old_py[i] = 0;
     }

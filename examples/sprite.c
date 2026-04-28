@@ -1,7 +1,7 @@
 // Clears the 7680 bytes of Graphics RAM using native pointers
 int clear_gfx_ram() {
     int *vram = 16384; // Base address 0x4000
-    for (int i = 0; i < 3840; i = i + 1) {
+    for (reg int i = 0; i < 3840; i = i + 1) {
         *vram = 0;
         vram = vram + 2; 
     }
@@ -13,13 +13,20 @@ int draw_sprite(int x, int y, int *sprite, int color) {
     for (int row = 0; row < 16; row = row + 1) {
         int row_data = sprite[row]; // Native Array Access!
         
-        for (int col = 0; col < 16; col = col + 1) {
-            // If the 16-bit number shifted left has its MSB set to 1, 
-            // the compiler natively treats it as negative (< 0). 
-            // This is a super fast way to test bits!
-            if ((row_data << col) < 0) {
-                put_pixel_xy(x + col, y + row, color);
+        for (reg int col = 0; col < 16; col = col + 1) {
+            if (row_data == 0) break; // Massive speedup: skip remaining empty columns!
+            
+            // Test the MSB directly
+            if (row_data < 0) {
+                int px = x + col;
+                // Bounds check prevents VRAM corruption when x wraps to negative
+                if (px >= 0 && px < 256) {
+                    put_pixel_xy(px, y + row, color);
+                }
             }
+            
+            // Shift left by 1 bit to prepare the next bit for the MSB test
+            row_data = row_data << 1;
         }
     }
     return 0;

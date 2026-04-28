@@ -2,16 +2,17 @@
 
 static Compiler *compiler;
 
-Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool is_pointer, bool is_16bit, int array_size) {
+Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool is_pointer, bool is_16bit, int array_size, bool is_reg) {
     Symbol *sym = malloc(sizeof(Symbol));
     sym->name = strdup(name);
     sym->is_global = is_global;
     sym->is_pointer = is_pointer;
     sym->is_16bit = is_16bit;
     sym->array_size = array_size;
+    sym->is_reg = is_reg;
     int count = array_size > 0 ? array_size : 1;
 
-    if (!is_global) {
+    if (!is_global && !is_reg) {
         // Allocate offset on stack from frame pointer
         symtab->next_address += (is_16bit ? 2 : 1) * count;
         sym->address = -symtab->next_address;
@@ -70,8 +71,12 @@ static void compile_binary_op(ASTNode *node) {
         emit("\tSBB H\n");
         emit("\tMOV H, A\n");
     } else if (strcmp(op, "*") == 0) {
-        compiler->uses_mul = true;
-        emit("\tCALL __mul\n");
+        // Inline hardware multiply! (Replaces slow software __mul)
+        emit("\tPUSH B\t; Preserve reg variables\n");
+        emit("\tMOV A, E\n");
+        emit("\tMOV B, L\n");
+        emit("\tMUL B\n");
+        emit("\tPOP B\t; Restore reg variables\n");
     } else if (strcmp(op, "/") == 0) {
         compiler->uses_div = true;
         emit("\tCALL __div\n");
@@ -279,6 +284,13 @@ static void compile_expression(ASTNode *node) {
                     if (sym->is_global) {
                         emit("\tLHLD %s\n", node->value);
                     } else {
+                        if (sym->is_reg) {
+                            if (sym->is_16bit) {
+                                emit("\tMOV H, B\n\tMOV L, C\n");
+                            } else {
+                                emit("\tMOV L, C\n\tMVI H, 0\n");
+                            }
+                        } else {
                         if (compiler->use_frame_pointer) {
                             emit("\tLHLD __FP\n");
                             emit("\tLXI D, %d\n", sym->address);
@@ -290,11 +302,15 @@ static void compile_expression(ASTNode *node) {
                         } else {
                             emit("\tLHLD __VAR_%s_%s\n", compiler->current_function, node->value);
                         }
+                        }
                     }
                 } else { // 8-bit read
                     if (sym->is_global) {
                         emit("\tLDA %s\n", node->value);
                     } else {
+                        if (sym->is_reg) {
+                            emit("\tMOV L, C\n\tMVI H, 0\n");
+                        } else {
                         if (compiler->use_frame_pointer) {
                             emit("\tLHLD __FP\n");
                             emit("\tLXI D, %d\n", sym->address);
@@ -302,6 +318,7 @@ static void compile_expression(ASTNode *node) {
                             emit("\tMOV A, M\t; Load %s\n", node->value);
                         } else {
                             emit("\tLDA __VAR_%s_%s\n", compiler->current_function, node->value);
+                        }
                         }
                     }
                     emit("\tMOV L, A\n");
@@ -452,6 +469,13 @@ static void compile_expression(ASTNode *node) {
                         if (sym->is_global) {
                             emit("\tSHLD %s\n", lhs->value);
                         } else {
+                            if (sym->is_reg) {
+                                if (sym->is_16bit) {
+                                    emit("\tMOV B, H\n\tMOV C, L\n");
+                                } else {
+                                    emit("\tMOV C, L\n\tMVI B, 0\n");
+                                }
+                            } else {
                             if (compiler->use_frame_pointer) {
                                 emit("\tPUSH H\t; Save assigned value\n");
                                 emit("\tLHLD __FP\n");
@@ -465,12 +489,16 @@ static void compile_expression(ASTNode *node) {
                             } else {
                                 emit("\tSHLD __VAR_%s_%s\n", compiler->current_function, lhs->value);
                             }
+                            }
                         }
                     } else { // 8-bit assignment
                         if (sym->is_global) {
                             emit("\tMOV A, L\n");
                             emit("\tSTA %s\n", lhs->value);
                         } else {
+                            if (sym->is_reg) {
+                                emit("\tMOV C, L\n\tMVI B, 0\n");
+                            } else {
                             if (compiler->use_frame_pointer) {
                                 emit("\tPUSH H\n");
                                 emit("\tLHLD __FP\n");
@@ -482,6 +510,7 @@ static void compile_expression(ASTNode *node) {
                             } else {
                                 emit("\tMOV A, L\n");
                                 emit("\tSTA __VAR_%s_%s\n", compiler->current_function, lhs->value);
+                            }
                             }
                         }
                     }
@@ -530,6 +559,10 @@ static void compile_expression(ASTNode *node) {
             if (var->type == AST_IDENT) {
                 Symbol *sym = find_symbol(compiler->symtab, var->value);
                 if (sym) {
+                        if (sym->is_reg) {
+                            fprintf(stderr, "Error: Cannot take address of register variable '%s'\n", var->value);
+                            exit(1);
+                        }
                     if (sym->is_global) {
                         emit("\tLXI H, %s\n", var->value);
                     } else {
@@ -570,6 +603,12 @@ static void compile_statement(ASTNode *node) {
                         emit("\tMOV M, E\n");
                         emit("\tINX H\n");
                         emit("\tMOV M, D\n");
+                    } else if (sym->is_reg) {
+                        if (sym->is_16bit) {
+                            emit("\tMOV B, H\n\tMOV C, L\n");
+                        } else {
+                            emit("\tMOV C, L\n\tMVI B, 0\n");
+                        }
                     } else {
                         emit("\tSHLD __VAR_%s_%s\n", compiler->current_function, var_name);
                     }
@@ -581,6 +620,8 @@ static void compile_statement(ASTNode *node) {
                         emit("\tDAD D\n");
                         emit("\tPOP D\n");
                         emit("\tMOV M, E\n"); // Store low byte
+                    } else if (sym->is_reg) {
+                        emit("\tMOV C, L\n\tMVI B, 0\n");
                     } else {
                         emit("\tMOV A, L\n");
                         emit("\tSTA __VAR_%s_%s\n", compiler->current_function, var_name);
@@ -593,6 +634,9 @@ static void compile_statement(ASTNode *node) {
         case AST_RETURN:
             if (node->child_count > 0) {
                 compile_expression(node->children[0]);
+            }
+            if (compiler->uses_bc) {
+                emit("\tPOP B\t; Restore callee-saved register for 'reg'\n");
             }
             // Epilogue
             emit("\tXCHG\t; Save return value\n");
@@ -642,9 +686,12 @@ static void compile_statement(ASTNode *node) {
             emit("\tJZ L%d\n", label_end);
 
             int old_break = compiler->current_break_label;
+            int old_continue = compiler->current_continue_label;
             compiler->current_break_label = label_end;
+            compiler->current_continue_label = label_start;
             compile_statement(node->children[1]);
             compiler->current_break_label = old_break;
+            compiler->current_continue_label = old_continue;
 
             emit("\tJMP L%d\n", label_start);
             emit("L%d:\n", label_end);
@@ -654,14 +701,19 @@ static void compile_statement(ASTNode *node) {
         case AST_DO_WHILE: {
             int label_start = next_label();
             int label_end = next_label();
+            int label_continue = next_label();
 
             emit("L%d:\n", label_start);
             // Execute body first
             int old_break = compiler->current_break_label;
+            int old_continue = compiler->current_continue_label;
             compiler->current_break_label = label_end;
+            compiler->current_continue_label = label_continue;
             compile_statement(node->children[0]);
             compiler->current_break_label = old_break;
+            compiler->current_continue_label = old_continue;
 
+            emit("L%d:\n", label_continue);
             // Then check condition
             compile_expression(node->children[1]);
             emit("\tMOV A, H\n");
@@ -690,9 +742,12 @@ static void compile_statement(ASTNode *node) {
 
             // Body (child 3)
             int old_break = compiler->current_break_label;
+            int old_continue = compiler->current_continue_label;
             compiler->current_break_label = label_end;
+            compiler->current_continue_label = label_increment;
             compile_statement(node->children[3]);
             compiler->current_break_label = old_break;
+            compiler->current_continue_label = old_continue;
 
             // Increment (child 2)
             emit("L%d:\n", label_increment);
@@ -716,6 +771,15 @@ static void compile_statement(ASTNode *node) {
                 emit("\tJMP L%d\n", compiler->current_break_label);
             } else {
                 fprintf(stderr, "Error: break statement not within loop\n");
+                exit(1);
+            }
+            break;
+
+        case AST_CONTINUE:
+            if (compiler->current_continue_label >= 0) {
+                emit("\tJMP L%d\n", compiler->current_continue_label);
+            } else {
+                fprintf(stderr, "Error: continue statement not within loop\n");
                 exit(1);
             }
             break;
@@ -769,7 +833,12 @@ static void collect_local_vars(ASTNode *node) {
         const char *var_name = is_pointer ? node->value + 1 : node->value;
         Symbol *existing = find_symbol(compiler->symtab, var_name);
         if (!existing || existing->is_global) {
-            add_symbol(compiler->symtab, var_name, false, is_pointer, node->datatype == 2, node->array_size);
+            bool allocate_reg = false;
+            if (node->is_reg && !compiler->uses_bc && !is_pointer && node->array_size == 0) {
+                allocate_reg = true;
+                compiler->uses_bc = true;
+            }
+            add_symbol(compiler->symtab, var_name, false, is_pointer, node->datatype == 2, node->array_size, allocate_reg);
         }
     }
     for (int i = 0; i < node->child_count; i++) {
@@ -780,7 +849,7 @@ static void collect_local_vars(ASTNode *node) {
 static void emit_shadow_stack_pops(Symbol *sym) {
     if (!sym) return;
     emit_shadow_stack_pops(sym->next);
-    if (sym->array_size > 0) return; // Skip statically allocated shadow arrays
+    if (sym->array_size > 0 || sym->is_reg) return; // Skip statically allocated arrays and registers
     emit("\tPOP H\t\t; Shadow stack pop\n");
     if (sym->is_16bit) {
         emit("\tSHLD __VAR_%s_%s\n", compiler->current_function, sym->name);
@@ -795,12 +864,15 @@ static void compile_function(ASTNode *node) {
     // Reset symbol table for this function
     compiler->symtab->next_address = 0;  // Start offsets at 0
     compiler->symtab->symbols = NULL;
+    compiler->uses_bc = false;
 
     collect_local_vars(node);
     int local_space = compiler->symtab->next_address;
-    int symbol_count = 0;
+    int pushed_symbol_count = 0;
     for (Symbol *s = compiler->symtab->symbols; s; s = s->next) {
-        symbol_count++;
+        if (s->array_size == 0 && !s->is_reg) {
+            pushed_symbol_count++;
+        }
     }
 
     emit("\n%s:\n", node->value);
@@ -820,7 +892,7 @@ static void compile_function(ASTNode *node) {
     } else {
         Symbol *sym = compiler->symtab->symbols;
         while (sym) {
-            if (sym->array_size == 0) {
+            if (sym->array_size == 0 && !sym->is_reg) {
                 emit("\tLHLD __VAR_%s_%s\t; Shadow stack push\n", compiler->current_function, sym->name);
                 emit("\tPUSH H\n");
             }
@@ -848,23 +920,25 @@ static void compile_function(ASTNode *node) {
                 emit("\tLHLD __FP\n");
                 emit("\tLXI B, %d\n", sym->address);
                 emit("\tDAD B\n");
-                if (sym->is_16bit) {
-                    emit("\tMOV M, E\n");
-                    emit("\tINX H\n");
-                    emit("\tMOV M, D\n");
+                if (sym->is_reg) {
+                    emit("\tMOV B, D\n\tMOV C, E\n");
+                } else if (sym->is_16bit) {
+                    emit("\tMOV M, E\n\tINX H\n\tMOV M, D\n");
                 } else {
                     emit("\tMOV M, E\n");
                 }
             } else {
                 emit("\t; Load parameter %s from hardware stack\n", var_name);
-                emit("\tLXI H, %d\n", symbol_count * 2 + 2 + i * 2);
+                emit("\tLXI H, %d\n", pushed_symbol_count * 2 + 2 + i * 2);
                 emit("\tDAD SP\n");
                 emit("\tMOV E, M\n");
                 emit("\tINX H\n");
                 emit("\tMOV D, M\n");
                 emit("\tXCHG\n"); // HL = value
                 
-                if (sym->is_16bit) {
+                if (sym->is_reg) {
+                    emit("\tMOV B, H\n\tMOV C, L\n");
+                } else if (sym->is_16bit) {
                     emit("\tSHLD __VAR_%s_%s\n", compiler->current_function, var_name);
                 } else {
                     emit("\tMOV A, L\n");
@@ -874,12 +948,19 @@ static void compile_function(ASTNode *node) {
         }
     }
 
+    if (compiler->uses_bc) {
+        emit("\tPUSH B\t; Save callee-saved register for 'reg' keyword\n");
+    }
+
     // Compile function body
     compile_statement(node->children[node->child_count - 1]);
 
     // Fallback epilogue in case function doesn't end with return
     emit("\t; Fallback epilogue\n");
     emit("\tLXI H, 0\n"); // default return 0
+    if (compiler->uses_bc) {
+        emit("\tPOP B\t; Restore callee-saved register for 'reg'\n");
+    }
     emit("\tXCHG\n");
     if (compiler->use_frame_pointer) {
         emit("\tLHLD __FP\n");
@@ -896,7 +977,7 @@ static void compile_function(ASTNode *node) {
         emit("\n; Local variables for %s\n", node->value);
         Symbol *sym = compiler->symtab->symbols;
         while (sym) {
-            if (!sym->is_global) {
+            if (!sym->is_global && !sym->is_reg) {
                 int size = (sym->is_16bit || sym->is_pointer ? 2 : 1) * (sym->array_size > 0 ? sym->array_size : 1);
                 emit("__VAR_%s_%s:\tDS %d\t; %s\n", compiler->current_function, sym->name, size, sym->array_size > 0 ? "array" : (sym->is_pointer ? "pointer" : "variable"));
             }
@@ -955,6 +1036,7 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
     compiler->uses_div = false;
     compiler->uses_mod = false;
     compiler->current_break_label = -1;
+    compiler->current_continue_label = -1;
 
     bool has_custom_crt = false;
     for (int i = 0; i < ast->child_count; i++) {
@@ -1034,6 +1116,7 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
     if (compiler->uses_mul) {
         emit("__mul:\n");
         emit("\t; Multiply DE * HL, result in HL (16-bit)\n");
+        emit("\tPUSH B\t; Preserve callee-saved reg variable\n");
         emit("\tMOV B, H\n");
         emit("\tMOV C, L\n");
         emit("\tLXI H, 0\n");
@@ -1053,12 +1136,14 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
         emit("\tPOP PSW\n");
         emit("\tDCR A\n");
         emit("\tJNZ __mul_loop\n");
+        emit("\tPOP B\n");
         emit("\tRET\n\n");
     }
 
     if (compiler->uses_div) {
         emit("__div:\n");
         emit("\t; Divide DE / HL, result in HL (16-bit)\n");
+        emit("\tPUSH B\t; Preserve callee-saved reg variable\n");
         emit("\tMOV B, H\n");
         emit("\tMOV C, L\n"); // BC = divisor
         emit("\tLXI H, 0\n"); // HL = quotient
@@ -1073,12 +1158,14 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
         emit("\tINX H\n");
         emit("\tJMP __div_loop\n");
         emit("__div_end:\n");
+        emit("\tPOP B\n");
         emit("\tRET\n\n");
     }
 
     if (compiler->uses_mod) {
         emit("__mod:\n");
         emit("\t; Modulo DE %% HL, result in HL (16-bit)\n");
+        emit("\tPUSH B\t; Preserve callee-saved reg variable\n");
         emit("\tMOV B, H\n");
         emit("\tMOV C, L\n"); // BC = divisor
         emit("__mod_loop:\n");
@@ -1093,6 +1180,7 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
         emit("__mod_end:\n");
         emit("\tMOV A, E\n\tADD C\n\tMOV L, A\n"); // Add divisor back to remainder
         emit("\tMOV A, D\n\tADC B\n\tMOV H, A\n");
+        emit("\tPOP B\n");
         emit("\tRET\n\n");
     }
 

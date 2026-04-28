@@ -6,6 +6,7 @@ ASTNode* create_node(ASTNodeType type, const char *value) {
     node->value = value ? strdup(value) : NULL;
     node->datatype = 2; // Default to 16-bit
     node->array_size = 0;
+    node->is_reg = false;
     node->is_used = false;
     node->children = NULL;
     node->child_count = 0;
@@ -262,6 +263,12 @@ static ASTNode* parse_block() {
 }
 
 static ASTNode* parse_statement() {
+    bool is_reg = false;
+    if (match(TOK_REG)) {
+        is_reg = true;
+        next();
+    }
+
     // Variable declaration
     if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR)) {
         bool is_16bit = true;
@@ -285,6 +292,7 @@ static ASTNode* parse_statement() {
         Token *name = expect(TOK_IDENT);
         ASTNode *vardecl = create_node(AST_VARDECL, name->value);
         vardecl->datatype = is_16bit ? 2 : 1;
+        vardecl->is_reg = is_reg;
         // Store pointer info in the node value (hacky but simple)
         if (is_pointer) {
             char *ptr_name = malloc(strlen(name->value) + 2);
@@ -303,6 +311,9 @@ static ASTNode* parse_statement() {
         }
         expect(TOK_SEMICOLON);
         return vardecl;
+    } else if (is_reg) {
+        fprintf(stderr, "Error: Expected type after 'reg' keyword at line %d\n", peek()->line);
+        exit(1);
     }
 
     // Inline assembly block
@@ -334,6 +345,13 @@ static ASTNode* parse_statement() {
         next();
         expect(TOK_SEMICOLON);
         return create_node(AST_BREAK, NULL);
+    }
+
+    // Continue statement
+    if (match(TOK_CONTINUE)) {
+        next();
+        expect(TOK_SEMICOLON);
+        return create_node(AST_CONTINUE, NULL);
     }
 
     // If statement
@@ -381,6 +399,12 @@ static ASTNode* parse_statement() {
         expect(TOK_LPAREN);
         ASTNode *for_stmt = create_node(AST_FOR, NULL);
 
+        bool is_for_reg = false;
+        if (match(TOK_REG)) {
+            is_for_reg = true;
+            next();
+        }
+
         // Initialization (can be variable declaration or expression)
         if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR)) {
             bool is_16bit = true;
@@ -403,6 +427,7 @@ static ASTNode* parse_statement() {
             Token *name = expect(TOK_IDENT);
             ASTNode *vardecl = create_node(AST_VARDECL, name->value);
             vardecl->datatype = is_16bit ? 2 : 1;
+            vardecl->is_reg = is_for_reg;
             if (is_pointer) {
                 char *ptr_name = malloc(strlen(name->value) + 2);
                 sprintf(ptr_name, "*%s", name->value);
@@ -419,6 +444,9 @@ static ASTNode* parse_statement() {
                 add_child(vardecl, parse_expression());
             }
             add_child(for_stmt, vardecl);
+        } else if (is_for_reg) {
+            fprintf(stderr, "Error: Expected type after 'reg' keyword at line %d\n", peek()->line);
+            exit(1);
         } else if (!match(TOK_SEMICOLON)) {
             add_child(for_stmt, parse_expression());
         } else {
@@ -478,6 +506,11 @@ static ASTNode* parse_function() {
 
     expect(TOK_LPAREN);
     while (!match(TOK_RPAREN) && !match(TOK_EOF)) {
+        bool is_param_reg = false;
+        if (match(TOK_REG)) {
+            is_param_reg = true;
+            next();
+        }
         if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR)) {
             bool is_16bit = true;
             if (match(TOK_SHORT)) {
@@ -499,6 +532,7 @@ static ASTNode* parse_function() {
             Token *pname = expect(TOK_IDENT);
             ASTNode *param = create_node(AST_VARDECL, pname->value);
             param->datatype = is_16bit ? 2 : 1;
+            param->is_reg = is_param_reg;
             if (is_pointer) {
                 char *ptr_name = malloc(strlen(pname->value) + 2);
                 sprintf(ptr_name, "*%s", pname->value);

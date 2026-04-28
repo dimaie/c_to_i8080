@@ -17,7 +17,7 @@ int main() {
                     
                     int x = 0;
                     int y = 0;
-                    int iter = 0;
+                    reg int iter = 0; // Hardware register acceleration!
                     int abs_x;
                     int abs_y;
                     
@@ -29,16 +29,16 @@ int main() {
                             break;
                         }
                         
-                        // Massive speedup: Use hardware mul8 directly on pre-calculated abs values
-                        int x2 = mul8(abs_x, abs_x) >> 5;
-                        int y2 = mul8(abs_y, abs_y) >> 5;
+                        // Massive speedup: Native multiply uses inline hardware MUL B!
+                        int x2 = (abs_x * abs_x) >> 5;
+                        int y2 = (abs_y * abs_y) >> 5;
                         
                         // Escape if distance squared > 4.0 (128 in Q5)
                         if (x2 + y2 > 128) {
                             break;
                         }
                         
-                        int xy = mul8(abs_x, abs_y) >> 5;
+                        int xy = (abs_x * abs_y) >> 5;
                         if ((x ^ y) < 0) xy = -xy; // Rapid sign restoration!
                         y = xy + xy + y0;
                         x = x2 - y2 + x0;
