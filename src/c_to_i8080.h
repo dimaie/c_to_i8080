@@ -18,7 +18,7 @@
 // Token types
 typedef enum {
     TOK_EOF,
-    TOK_INT, TOK_SHORT, TOK_CHAR, TOK_VOID, TOK_RETURN, TOK_IF, TOK_ELSE, TOK_WHILE, TOK_FOR, TOK_DO, TOK_ASM,
+    TOK_INT, TOK_SHORT, TOK_CHAR, TOK_VOID, TOK_RETURN, TOK_IF, TOK_ELSE, TOK_WHILE, TOK_FOR, TOK_DO, TOK_ASM, TOK_BREAK,
     TOK_IDENT, TOK_NUMBER, TOK_STRING,
     TOK_LPAREN, TOK_RPAREN, TOK_LBRACE, TOK_RBRACE, TOK_LBRACKET, TOK_RBRACKET,
     TOK_SEMICOLON, TOK_COMMA, TOK_ASSIGN,
@@ -57,7 +57,8 @@ typedef enum {
     AST_ARRAY_ACCESS, // arr[idx]
     AST_DEREF,      // *ptr (dereference)
     AST_ADDROF,     // &var (address-of)
-    AST_ASM         // asm { ... } (inline assembly)
+    AST_ASM,        // asm { ... } (inline assembly)
+    AST_BREAK       // break;
 } ASTNodeType;
 
 typedef struct ASTNode {
@@ -102,6 +103,7 @@ typedef struct {
     bool use_frame_pointer; // Track which memory model to use
     int org_address; // Starting memory address
     int stack_address; // Top of the stack address
+    int current_break_label; // Label to jump to on 'break'
 } Compiler;
 
 // Lexer functions

@@ -39,6 +39,7 @@ The hardware is based on the OneChipBook laptop. `OneChipBook12-TechRef.pdf` is 
 - Memory is initialized from a `program.hex` hex file.
 - The ALU evaluates arithmetic/logic operations on the positive clock edge but updates processor flags (Z, C, P, S) on the negative clock edge.
 - Video Mixer Logic: The VGA display pipeline reads both Text and Graphics RAM simultaneously. Text pixels are overlaid transparently on top of graphics pixels, eliminating the need for a dedicated video mode register.
+- **Custom Instructions (Hardware Math):** The standard 8080 ISA has been extended. The unused opcode `0xED` is mapped to `MUL B`. It performs a hardware-accelerated 8-bit unsigned multiplication of the Accumulator (`A`) and register `B`, storing the 16-bit product in the `HL` register pair.
 
 ## System Monitor (ROM) Specification
 A ROM-based system monitor program is being developed gradually to provide basic debugging, execution, and API functionalities.
@@ -46,13 +47,20 @@ A ROM-based system monitor program is being developed gradually to provide basic
 ### C-Compiler ROM API (Jump Table)
 The monitor provides a stable API for compiled C programs or user assembly routines. Arguments are passed via the hardware stack (Right-to-Left, 16-bit per argument, Caller Cleanup). Return values are placed in the `HL` register pair (or `L` for 8-bit returns).
 
+**API Naming Conventions:**
+- **`print_` vs `put_`**: `print_` functions act as stateful stream outputs. They rely on the hardware text cursor and handle line wrapping and scrolling automatically. `put_` functions are stateless and perform absolute coordinate plotting without affecting the hardware cursor.
+- **`_xy` Suffix**: Indicates the function operates on absolute X and Y coordinates.
+- **`_C` Suffix (Internal Assembly)**: Denotes a subroutine as a C ABI wrapper responsible for safely extracting arguments from the Caller-Cleanup stack frame.
+
 - `0x0010`: `void print_char(int c)` - Prints a character to Text RAM and advances the hardware cursor.
 - `0x0013`: `int read_key()` - Blocks and returns the ASCII value of the next key pressed.
 - `0x0016`: `void clear_screen(int layer)` - Clears the screen (layer: 0 = both, 1 = text, 2 = graphics).
-- `0x0019`: `void print_char_xy(int c, int x, int y)` - Draws a character directly to specific Text RAM coordinates (X: 0-63, Y: 0-29).
+- `0x0019`: `void put_char_xy(int c, int x, int y)` - Draws a character directly to specific Text RAM coordinates (X: 0-63, Y: 0-29).
 - `0x001C`: `int read_char_xy(int x, int y)` - Reads the character currently at the specified Text RAM coordinates (X: 0-63, Y: 0-29).
 - `0x001F`: `int read_pixel_xy(int x, int y)` - Reads the pixel state (0 or 1) at the specified Graphics RAM coordinates (X: 0-255, Y: 0-239).
 - `0x0022`: `int check_key(void)` - Non-blocking check of the PS/2 keyboard. Returns the scan code, or 0 if empty.
+- `0x0025`: `void draw_line(int x0, int y0, int x1, int y1, int color)` - Draws a line between (x0, y0) and (x1, y1) using the specified color (0 = background, 1 = ink).
+- `0x0028`: `void put_pixel_xy(int x, int y, int color)` - Sets or clears a single pixel at the specified Graphics RAM coordinates (X: 0-255, Y: 0-239).
 
 ### Monitor Commands
 - `Dxxxx[,yyyy]` - **Dump Memory:** Displays the memory contents starting at hex address `xxxx`. If `yyyy` is provided, dumps the range up to `yyyy`.

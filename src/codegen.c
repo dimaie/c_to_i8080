@@ -641,7 +641,11 @@ static void compile_statement(ASTNode *node) {
             emit("\tORA L\n");
             emit("\tJZ L%d\n", label_end);
 
+            int old_break = compiler->current_break_label;
+            compiler->current_break_label = label_end;
             compile_statement(node->children[1]);
+            compiler->current_break_label = old_break;
+
             emit("\tJMP L%d\n", label_start);
             emit("L%d:\n", label_end);
             break;
@@ -653,7 +657,10 @@ static void compile_statement(ASTNode *node) {
 
             emit("L%d:\n", label_start);
             // Execute body first
+            int old_break = compiler->current_break_label;
+            compiler->current_break_label = label_end;
             compile_statement(node->children[0]);
+            compiler->current_break_label = old_break;
 
             // Then check condition
             compile_expression(node->children[1]);
@@ -682,7 +689,10 @@ static void compile_statement(ASTNode *node) {
             emit("\tJZ L%d\n", label_end);
 
             // Body (child 3)
+            int old_break = compiler->current_break_label;
+            compiler->current_break_label = label_end;
             compile_statement(node->children[3]);
+            compiler->current_break_label = old_break;
 
             // Increment (child 2)
             emit("L%d:\n", label_increment);
@@ -698,6 +708,15 @@ static void compile_statement(ASTNode *node) {
         case AST_BLOCK:
             for (int i = 0; i < node->child_count; i++) {
                 compile_statement(node->children[i]);
+            }
+            break;
+
+        case AST_BREAK:
+            if (compiler->current_break_label >= 0) {
+                emit("\tJMP L%d\n", compiler->current_break_label);
+            } else {
+                fprintf(stderr, "Error: break statement not within loop\n");
+                exit(1);
             }
             break;
 
@@ -935,6 +954,7 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
     compiler->uses_mul = false;
     compiler->uses_div = false;
     compiler->uses_mod = false;
+    compiler->current_break_label = -1;
 
     bool has_custom_crt = false;
     for (int i = 0; i < ast->child_count; i++) {

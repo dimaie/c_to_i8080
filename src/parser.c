@@ -329,6 +329,13 @@ static ASTNode* parse_statement() {
         return ret;
     }
 
+    // Break statement
+    if (match(TOK_BREAK)) {
+        next();
+        expect(TOK_SEMICOLON);
+        return create_node(AST_BREAK, NULL);
+    }
+
     // If statement
     if (match(TOK_IF)) {
         next();

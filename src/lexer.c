@@ -1,7 +1,7 @@
 #include "c_to_i8080.h"
 
 static bool is_keyword(const char *str) {
-    const char *keywords[] = {"int", "short", "char", "void", "return", "if", "else", "while", "for", "do", "asm", NULL};
+    const char *keywords[] = {"int", "short", "char", "void", "return", "if", "else", "while", "for", "do", "asm", "break", NULL};
     for (int i = 0; keywords[i]; i++) {
         if (strcmp(str, keywords[i]) == 0) return true;
     }
@@ -18,7 +18,9 @@ static TokenType get_keyword_type(const char *str) {
     if (strcmp(str, "else") == 0) return TOK_ELSE;
     if (strcmp(str, "while") == 0) return TOK_WHILE;
     if (strcmp(str, "for") == 0) return TOK_FOR;
+    if (strcmp(str, "do") == 0) return TOK_DO;
     if (strcmp(str, "asm") == 0) return TOK_ASM;
+    if (strcmp(str, "break") == 0) return TOK_BREAK;
     return TOK_IDENT;
 }
 

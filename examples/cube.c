@@ -14,62 +14,14 @@ int divide(int a, int b) {
     return res;
 }
 
-// Sets or clears a single pixel safely 
-int put_pixel(int x, int y, int color) {
-    // Bounds checking to prevent VRAM overflow
-    if (x < 0) return 0;
-    if (x >= 256) return 0;
-    if (y < 0) return 0;
-    if (y >= 240) return 0;
-    
-    // Calculate native memory offset
-    int *vram_addr = 16384 + (y << 5) + (x >> 3);
-    int rem = x & 7; // Fast modulo 8
-    int mask = 128 >> rem;
-    
-    if (color) {
-        *vram_addr = *vram_addr | mask;
-    } else {
-        *vram_addr = *vram_addr & (~mask); // Erase pixel
-    }
-    return 0;
-}
-
-// Bresenham's Line Algorithm leveraging pure integer math
-int draw_line(int x0, int y0, int x1, int y1, int color) {
-    int dx = abs(x1 - x0);
-    int dy = abs(y1 - y0);
-    int sx = -1;
-    int sy = -1;
-    int err;
-    int e2;
-    int done = 0;
-    
-    if (x0 < x1) sx = 1;
-    if (y0 < y1) sy = 1;
-    
-    err = dx - dy;
-    
-    while (!done) {
-        put_pixel(x0, y0, color);
-        
-        if (x0 == x1 && y0 == y1) {
-            done = 1;
-        }
-        
-        if (!done) {
-            e2 = err << 1;
-            if (e2 > -dy) {
-                err = err - dy;
-                x0 = x0 + sx;
-            }
-            if (e2 < dx) {
-                err = err + dx;
-                y0 = y0 + sy;
-            }
-        }
-    }
-    return 0;
+// Safe signed multiplication wrapper using hardware mul8
+int multiply(int a, int b) {
+    int sign = 0;
+    if (a < 0) { a = -a; sign = sign ^ 1; }
+    if (b < 0) { b = -b; sign = sign ^ 1; }
+    int res = mul8(a, b);
+    if (sign) return -res;
+    return res;
 }
 
 // High-speed 32-step Sine Lookup Table (sin * 100)
@@ -128,19 +80,19 @@ int project_vertex(int idx, int x, int y, int z, int ax, int ay, int *px_arr, in
     // Rotate Y axis
     int sin_y = get_sin(ay);
     int cos_y = get_cos(ay);
-    int x1 = divide(x * cos_y + z * sin_y, 100);
-    int z1 = divide(z * cos_y - x * sin_y, 100);
+    int x1 = divide(multiply(x, cos_y) + multiply(z, sin_y), 100);
+    int z1 = divide(multiply(z, cos_y) - multiply(x, sin_y), 100);
 
     // Rotate X axis
     int sin_x = get_sin(ax);
     int cos_x = get_cos(ax);
-    int y1 = divide(y * cos_x - z1 * sin_x, 100);
-    int z2 = divide(z1 * cos_x + y * sin_x, 100);
+    int y1 = divide(multiply(y, cos_x) - multiply(z1, sin_x), 100);
+    int z2 = divide(multiply(z1, cos_x) + multiply(y, sin_x), 100);
 
     // Apply depth perspective and map to screen center (128x120)
     int z_dist = z2 + 150;
-    px_arr[idx] = divide(x1 * 128, z_dist) + 128;
-    py_arr[idx] = divide(y1 * 128, z_dist) + 120;
+    px_arr[idx] = divide(multiply(x1, 128), z_dist) + 128;
+    py_arr[idx] = divide(multiply(y1, 128), z_dist) + 120;
 
     return 0;
 }
@@ -195,7 +147,7 @@ int main() {
     int ax = 0;
     int ay = 0;
     int ax_step = 1;
-    int ay_step = 2;
+    int ay_step = 1;
     int dir = 4;
     int last_dir = -1;
     
@@ -220,13 +172,13 @@ int main() {
         
         // Use raw PS/2 Scan Codes from the hardware (Port 0x00)
         // W (29) or Up Arrow (117)
-        if (key == 29 || key == 117) { ax_step = 2; ay_step = 0; dir = 0; }
+        if (key == 29 || key == 117) { ax_step = 1; ay_step = 0; dir = 0; }
         // S (27) or Down Arrow (114)
-        if (key == 27 || key == 114) { ax_step = -2; ay_step = 0; dir = 1; }
+        if (key == 27 || key == 114) { ax_step = -1; ay_step = 0; dir = 1; }
         // D (35) or Right Arrow (116)
-        if (key == 35 || key == 116) { ax_step = 0; ay_step = 2; dir = 2; }
+        if (key == 35 || key == 116) { ax_step = 0; ay_step = 1; dir = 2; }
         // A (28) or Left Arrow (107)
-        if (key == 28 || key == 107) { ax_step = 0; ay_step = -2; dir = 3; }
+        if (key == 28 || key == 107) { ax_step = 0; ay_step = -1; dir = 3; }
         
         if (dir != last_dir) {
             update_dir_text(dir);

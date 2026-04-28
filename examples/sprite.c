@@ -8,25 +8,6 @@ int clear_gfx_ram() {
     return 0;
 }
 
-// Sets or clears a single pixel safely 
-int put_pixel(int x, int y, int color) {
-    if (x < 0) return 0;
-    if (x >= 256) return 0;
-    if (y < 0) return 0;
-    if (y >= 240) return 0;
-    
-    int *vram_addr = 16384 + (y << 5) + (x >> 3);
-    int rem = x & 7;
-    int mask = 128 >> rem;
-    
-    if (color) {
-        *vram_addr = *vram_addr | mask;
-    } else {
-        *vram_addr = *vram_addr & (~mask);
-    }
-    return 0;
-}
-
 // Draws a 16x16 sprite from an array
 int draw_sprite(int x, int y, int *sprite, int color) {
     for (int row = 0; row < 16; row = row + 1) {
@@ -37,7 +18,7 @@ int draw_sprite(int x, int y, int *sprite, int color) {
             // the compiler natively treats it as negative (< 0). 
             // This is a super fast way to test bits!
             if ((row_data << col) < 0) {
-                put_pixel(x + col, y + row, color);
+                put_pixel_xy(x + col, y + row, color);
             }
         }
     }
