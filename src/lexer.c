@@ -1,7 +1,7 @@
 #include "c_to_i8080.h"
 
 static bool is_keyword(const char *str) {
-    const char *keywords[] = {"int", "short", "char", "void", "return", "if", "else", "while", "for", "do", "asm", "break", "continue", "reg", "register", NULL};
+    const char *keywords[] = {"int", "short", "char", "void", "return", "if", "else", "while", "for", "do", "asm", "break", "continue", "reg", "register", "static", NULL};
     for (int i = 0; keywords[i]; i++) {
         if (strcmp(str, keywords[i]) == 0) return true;
     }
@@ -24,6 +24,7 @@ static TokenType get_keyword_type(const char *str) {
     if (strcmp(str, "continue") == 0) return TOK_CONTINUE;
     if (strcmp(str, "reg") == 0) return TOK_REG;
     if (strcmp(str, "register") == 0) return TOK_REG;
+    if (strcmp(str, "static") == 0) return TOK_STATIC;
     return TOK_IDENT;
 }
 
@@ -210,6 +211,42 @@ Token* tokenize(const char *source, int *token_count) {
         if (*p == '>' && *(p + 1) == '>') {
             tok->type = TOK_SHR;
             tok->value = strdup(">>");
+            p += 2;
+            continue;
+        }
+        if (*p == '+' && *(p + 1) == '+') {
+            tok->type = TOK_INC;
+            tok->value = strdup("++");
+            p += 2;
+            continue;
+        }
+        if (*p == '-' && *(p + 1) == '-') {
+            tok->type = TOK_DEC;
+            tok->value = strdup("--");
+            p += 2;
+            continue;
+        }
+        if (*p == '+' && *(p + 1) == '=') {
+            tok->type = TOK_PLUS_ASSIGN;
+            tok->value = strdup("+=");
+            p += 2;
+            continue;
+        }
+        if (*p == '-' && *(p + 1) == '=') {
+            tok->type = TOK_MINUS_ASSIGN;
+            tok->value = strdup("-=");
+            p += 2;
+            continue;
+        }
+        if (*p == '*' && *(p + 1) == '=') {
+            tok->type = TOK_STAR_ASSIGN;
+            tok->value = strdup("*=");
+            p += 2;
+            continue;
+        }
+        if (*p == '/' && *(p + 1) == '=') {
+            tok->type = TOK_SLASH_ASSIGN;
+            tok->value = strdup("/=");
             p += 2;
             continue;
         }

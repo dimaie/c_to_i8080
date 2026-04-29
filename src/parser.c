@@ -7,6 +7,7 @@ ASTNode* create_node(ASTNodeType type, const char *value) {
     node->datatype = 2; // Default to 16-bit
     node->array_size = 0;
     node->is_reg = false;
+    node->is_static = false;
     node->is_used = false;
     node->children = NULL;
     node->child_count = 0;
@@ -47,6 +48,7 @@ static Token* expect(TokenType type) {
 // Forward declarations
 static ASTNode* parse_expression();
 static ASTNode* parse_statement();
+static ASTNode* parse_unary();
 
 static ASTNode* parse_primary() {
     if (match(TOK_NUMBER)) {
@@ -91,10 +93,32 @@ static ASTNode* parse_primary() {
     exit(1);
 }
 
+static ASTNode* parse_postfix() {
+    ASTNode *left = parse_primary();
+    while (match(TOK_INC) || match(TOK_DEC)) {
+        Token *op = next();
+        ASTNodeType type = (strcmp(op->value, "++") == 0) ? AST_POST_INC : AST_POST_DEC;
+        ASTNode *node = create_node(type, op->value);
+        add_child(node, left);
+        left = node;
+    }
+    return left;
+}
+
 static ASTNode* parse_unary() {
     // Handle unary operators
-    if (match(TOK_MINUS) || match(TOK_NOT) || match(TOK_TILDE)) {
+    if (match(TOK_MINUS) || match(TOK_NOT) || match(TOK_TILDE) || match(TOK_INC) || match(TOK_DEC)) {
         Token *op = next();
+        if (strcmp(op->value, "++") == 0) {
+            ASTNode *node = create_node(AST_PRE_INC, "++");
+            add_child(node, parse_unary());
+            return node;
+        }
+        if (strcmp(op->value, "--") == 0) {
+            ASTNode *node = create_node(AST_PRE_DEC, "--");
+            add_child(node, parse_unary());
+            return node;
+        }
         ASTNode *node = create_node(AST_UNARY_OP, op->value);
         add_child(node, parse_unary());
         return node;
@@ -113,7 +137,7 @@ static ASTNode* parse_unary() {
         add_child(node, parse_unary());
         return node;
     }
-    return parse_primary();
+    return parse_postfix();
 }
 
 static ASTNode* parse_multiplicative() {
@@ -238,9 +262,19 @@ static ASTNode* parse_logical_or() {
 
 static ASTNode* parse_assignment() {
     ASTNode *left = parse_logical_or();
-    if (match(TOK_ASSIGN)) {
-        next();
-        ASTNode *node = create_node(AST_ASSIGN, "=");
+    if (match(TOK_ASSIGN) || match(TOK_PLUS_ASSIGN) || match(TOK_MINUS_ASSIGN) || match(TOK_STAR_ASSIGN) || match(TOK_SLASH_ASSIGN)) {
+        Token *op = next();
+        ASTNode *node;
+        if (op->type == TOK_ASSIGN) {
+            node = create_node(AST_ASSIGN, "=");
+        } else {
+            char *op_val = NULL;
+            if (op->type == TOK_PLUS_ASSIGN) op_val = "+";
+            else if (op->type == TOK_MINUS_ASSIGN) op_val = "-";
+            else if (op->type == TOK_STAR_ASSIGN) op_val = "*";
+            else if (op->type == TOK_SLASH_ASSIGN) op_val = "/";
+            node = create_node(AST_COMPOUND_ASSIGN, op_val);
+        }
         add_child(node, left);
         add_child(node, parse_assignment());
         return node;
@@ -264,8 +298,12 @@ static ASTNode* parse_block() {
 
 static ASTNode* parse_statement() {
     bool is_reg = false;
+    bool is_static = false;
     if (match(TOK_REG)) {
         is_reg = true;
+        next();
+    } else if (match(TOK_STATIC)) {
+        is_static = true;
         next();
     }
 
@@ -293,6 +331,7 @@ static ASTNode* parse_statement() {
         ASTNode *vardecl = create_node(AST_VARDECL, name->value);
         vardecl->datatype = is_16bit ? 2 : 1;
         vardecl->is_reg = is_reg;
+        vardecl->is_static = is_static;
         // Store pointer info in the node value (hacky but simple)
         if (is_pointer) {
             char *ptr_name = malloc(strlen(name->value) + 2);
@@ -311,8 +350,8 @@ static ASTNode* parse_statement() {
         }
         expect(TOK_SEMICOLON);
         return vardecl;
-    } else if (is_reg) {
-        fprintf(stderr, "Error: Expected type after 'reg' keyword at line %d\n", peek()->line);
+    } else if (is_reg || is_static) {
+        fprintf(stderr, "Error: Expected type after modifier keyword at line %d\n", peek()->line);
         exit(1);
     }
 
@@ -400,8 +439,12 @@ static ASTNode* parse_statement() {
         ASTNode *for_stmt = create_node(AST_FOR, NULL);
 
         bool is_for_reg = false;
+        bool is_for_static = false;
         if (match(TOK_REG)) {
             is_for_reg = true;
+            next();
+        } else if (match(TOK_STATIC)) {
+            is_for_static = true;
             next();
         }
 
@@ -428,6 +471,7 @@ static ASTNode* parse_statement() {
             ASTNode *vardecl = create_node(AST_VARDECL, name->value);
             vardecl->datatype = is_16bit ? 2 : 1;
             vardecl->is_reg = is_for_reg;
+            vardecl->is_static = is_for_static;
             if (is_pointer) {
                 char *ptr_name = malloc(strlen(name->value) + 2);
                 sprintf(ptr_name, "*%s", name->value);
@@ -444,8 +488,8 @@ static ASTNode* parse_statement() {
                 add_child(vardecl, parse_expression());
             }
             add_child(for_stmt, vardecl);
-        } else if (is_for_reg) {
-            fprintf(stderr, "Error: Expected type after 'reg' keyword at line %d\n", peek()->line);
+        } else if (is_for_reg || is_for_static) {
+            fprintf(stderr, "Error: Expected type after modifier keyword at line %d\n", peek()->line);
             exit(1);
         } else if (!match(TOK_SEMICOLON)) {
             add_child(for_stmt, parse_expression());

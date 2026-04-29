@@ -18,11 +18,12 @@
 // Token types
 typedef enum {
     TOK_EOF,
-    TOK_INT, TOK_SHORT, TOK_CHAR, TOK_VOID, TOK_RETURN, TOK_IF, TOK_ELSE, TOK_WHILE, TOK_FOR, TOK_DO, TOK_ASM, TOK_BREAK, TOK_REG, TOK_CONTINUE,
+    TOK_INT, TOK_SHORT, TOK_CHAR, TOK_VOID, TOK_RETURN, TOK_IF, TOK_ELSE, TOK_WHILE, TOK_FOR, TOK_DO, TOK_ASM, TOK_BREAK, TOK_REG, TOK_STATIC, TOK_CONTINUE,
     TOK_IDENT, TOK_NUMBER, TOK_STRING,
     TOK_LPAREN, TOK_RPAREN, TOK_LBRACE, TOK_RBRACE, TOK_LBRACKET, TOK_RBRACKET,
-    TOK_SEMICOLON, TOK_COMMA, TOK_ASSIGN,
-    TOK_PLUS, TOK_MINUS, TOK_STAR, TOK_SLASH, TOK_PERCENT,
+    TOK_SEMICOLON, TOK_COMMA,
+    TOK_ASSIGN, TOK_PLUS_ASSIGN, TOK_MINUS_ASSIGN, TOK_STAR_ASSIGN, TOK_SLASH_ASSIGN,
+    TOK_PLUS, TOK_MINUS, TOK_STAR, TOK_SLASH, TOK_PERCENT, TOK_INC, TOK_DEC,
     TOK_EQ, TOK_NE, TOK_LT, TOK_LE, TOK_GT, TOK_GE,
     TOK_AND, TOK_OR, TOK_NOT,
     TOK_AMPERSAND, TOK_PIPE, TOK_CARET, TOK_TILDE,
@@ -48,6 +49,11 @@ typedef enum {
     AST_DO_WHILE,
     AST_EXPR_STMT,
     AST_BINARY_OP,
+    AST_COMPOUND_ASSIGN,
+    AST_PRE_INC,
+    AST_PRE_DEC,
+    AST_POST_INC,
+    AST_POST_DEC,
     AST_UNARY_OP,
     AST_ASSIGN,
     AST_CALL,
@@ -68,6 +74,7 @@ typedef struct ASTNode {
     int datatype;     // 1 for 8-bit, 2 for 16-bit
     int array_size;   // Size of the array (0 if not an array)
     bool is_reg;      // True if variable is declared with the 'reg' keyword
+    bool is_static;   // True if variable is declared with the 'static' keyword
     bool is_used;     // Track if function is used (Dead Code Elimination)
     struct ASTNode **children;
     int child_count;
@@ -83,6 +90,7 @@ typedef struct Symbol {
     bool is_16bit;    // True for int/pointers, False for short/char
     int array_size;   // Size of the array (0 if not an array)
     bool is_reg;      // True if variable is allocated to a hardware register
+    bool is_static;   // True if variable is statically allocated
     struct Symbol *next;
 } Symbol;
 
@@ -125,7 +133,7 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
 // Utility functions
 ASTNode* create_node(ASTNodeType type, const char *value);
 void add_child(ASTNode *parent, ASTNode *child);
-Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool is_pointer, bool is_16bit, int array_size, bool is_reg);
+Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool is_pointer, bool is_16bit, int array_size, bool is_reg, bool is_static);
 Symbol* find_symbol(SymbolTable *symtab, const char *name);
 
 #endif // C_TO_I8080_H

@@ -2,7 +2,7 @@
 
 static Compiler *compiler;
 
-Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool is_pointer, bool is_16bit, int array_size, bool is_reg) {
+Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool is_pointer, bool is_16bit, int array_size, bool is_reg, bool is_static) {
     Symbol *sym = malloc(sizeof(Symbol));
     sym->name = strdup(name);
     sym->is_global = is_global;
@@ -10,9 +10,10 @@ Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool i
     sym->is_16bit = is_16bit;
     sym->array_size = array_size;
     sym->is_reg = is_reg;
+    sym->is_static = is_static;
     int count = array_size > 0 ? array_size : 1;
 
-    if (!is_global && !is_reg) {
+    if (!is_global && !is_reg && !is_static) {
         // Allocate offset on stack from frame pointer
         symtab->next_address += (is_16bit ? 2 : 1) * count;
         sym->address = -symtab->next_address;
@@ -258,6 +259,114 @@ static void compile_unary_op(ASTNode *node) {
     }
 }
 
+static void emit_store_hl_to_lvalue(ASTNode *lhs) {
+    if (lhs->type == AST_DEREF) {
+        // Assignment through pointer: *ptr = value
+        // The value to store is in HL.
+        emit("\tPUSH H\n");  // Save value to be stored
+        compile_expression(lhs->children[0]); // Pointer address now in HL
+        emit("\tPOP D\n");  // Value to be stored now in DE
+        emit("\tMOV M, E\n");
+        emit("\tINX H\n");
+        emit("\tMOV M, D\n");
+        emit("\tXCHG\n"); // Restore value back to HL
+    } else if (lhs->type == AST_ARRAY_ACCESS) {
+        Symbol *sym = find_symbol(compiler->symtab, lhs->value);
+        if (sym) {
+            emit("\tPUSH H\n"); // Save value to be stored
+            compile_expression(lhs->children[0]); // Index to HL
+            if (sym->is_16bit || sym->is_pointer) emit("\tDAD H\n");
+            emit("\tPUSH H\n"); // Save offset
+            
+            // Get base address
+            if (sym->array_size > 0) {
+                if (sym->is_global) {
+                    emit("\tLXI H, %s\n", lhs->value);
+                } else {
+                    if (compiler->use_frame_pointer && !sym->is_static) {
+                        emit("\tLHLD __FP\n");
+                        emit("\tLXI D, %d\n", sym->address);
+                        emit("\tDAD D\n");
+                    } else {
+                        emit("\tLXI H, __VAR_%s_%s\n", compiler->current_function, lhs->value);
+                    }
+                }
+            } else { // Pointer fallback
+                if (sym->is_global) {
+                    emit("\tLHLD %s\n", lhs->value);
+                } else {
+                    if (compiler->use_frame_pointer && !sym->is_static) {
+                        emit("\tLHLD __FP\n");
+                        emit("\tLXI D, %d\n", sym->address);
+                        emit("\tDAD D\n");
+                        emit("\tMOV E, M\n\tINX H\n\tMOV D, M\n\tXCHG\n");
+                    } else {
+                        emit("\tLHLD __VAR_%s_%s\n", compiler->current_function, lhs->value);
+                    }
+                }
+            }
+            
+            emit("\tPOP D\n"); emit("\tDAD D\n"); // Base + Offset
+            emit("\tPOP D\n"); // Value to store in DE
+            
+            if (sym->is_16bit || sym->is_pointer) {
+                emit("\tMOV M, E\n\tINX H\n\tMOV M, D\n\tXCHG\n");
+            } else {
+                emit("\tMOV M, E\n\tXCHG\n");
+            }
+        }
+    } else if (lhs->type == AST_IDENT) {
+        Symbol *sym = find_symbol(compiler->symtab, lhs->value);
+        if (sym) {
+            if (sym->is_16bit) {
+                if (sym->is_global) {
+                    emit("\tSHLD %s\n", lhs->value);
+                } else {
+                    if (sym->is_reg) {
+                        emit("\tMOV B, H\n\tMOV C, L\n");
+                    } else {
+                        if (compiler->use_frame_pointer && !sym->is_static) {
+                            emit("\tPUSH H\t; Save assigned value\n");
+                            emit("\tLHLD __FP\n");
+                            emit("\tLXI D, %d\n", sym->address);
+                            emit("\tDAD D\n");
+                            emit("\tPOP D\n");
+                            emit("\tMOV M, E\n");
+                            emit("\tINX H\n");
+                            emit("\tMOV M, D\n");
+                            emit("\tXCHG\t; Restore to %s\n", lhs->value);
+                        } else {
+                            emit("\tSHLD __VAR_%s_%s\n", compiler->current_function, lhs->value);
+                        }
+                    }
+                }
+            } else { // 8-bit assignment
+                if (sym->is_global) {
+                    emit("\tMOV A, L\n");
+                    emit("\tSTA %s\n", lhs->value);
+                } else {
+                    if (sym->is_reg) {
+                        emit("\tMOV C, L\n\tMVI B, 0\n");
+                    } else {
+                        if (compiler->use_frame_pointer && !sym->is_static) {
+                            emit("\tPUSH H\n");
+                            emit("\tLHLD __FP\n");
+                            emit("\tLXI D, %d\n", sym->address);
+                            emit("\tDAD D\n");
+                            emit("\tPOP D\n");
+                            emit("\tMOV M, E\n");
+                            emit("\tXCHG\n");
+                        } else {
+                            emit("\tMOV A, L\n");
+                            emit("\tSTA __VAR_%s_%s\n", compiler->current_function, lhs->value);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 static void compile_expression(ASTNode *node) {
     switch (node->type) {
         case AST_NUMBER:
@@ -272,7 +381,7 @@ static void compile_expression(ASTNode *node) {
                     if (sym->is_global) {
                         emit("\tLXI H, %s\n", node->value);
                     } else {
-                        if (compiler->use_frame_pointer) {
+                        if (compiler->use_frame_pointer && !sym->is_static) {
                             emit("\tLHLD __FP\n");
                             emit("\tLXI D, %d\n", sym->address);
                             emit("\tDAD D\n");
@@ -291,7 +400,7 @@ static void compile_expression(ASTNode *node) {
                                 emit("\tMOV L, C\n\tMVI H, 0\n");
                             }
                         } else {
-                        if (compiler->use_frame_pointer) {
+                        if (compiler->use_frame_pointer && !sym->is_static) {
                             emit("\tLHLD __FP\n");
                             emit("\tLXI D, %d\n", sym->address);
                             emit("\tDAD D\n");
@@ -311,7 +420,7 @@ static void compile_expression(ASTNode *node) {
                         if (sym->is_reg) {
                             emit("\tMOV L, C\n\tMVI H, 0\n");
                         } else {
-                        if (compiler->use_frame_pointer) {
+                        if (compiler->use_frame_pointer && !sym->is_static) {
                             emit("\tLHLD __FP\n");
                             emit("\tLXI D, %d\n", sym->address);
                             emit("\tDAD D\n");
@@ -343,7 +452,7 @@ static void compile_expression(ASTNode *node) {
                     if (sym->is_global) {
                         emit("\tLXI H, %s\n", node->value);
                     } else {
-                        if (compiler->use_frame_pointer) {
+                        if (compiler->use_frame_pointer && !sym->is_static) {
                             emit("\tLHLD __FP\n");
                             emit("\tLXI D, %d\n", sym->address);
                             emit("\tDAD D\n");
@@ -355,7 +464,7 @@ static void compile_expression(ASTNode *node) {
                     if (sym->is_global) {
                         emit("\tLHLD %s\n", node->value);
                     } else {
-                        if (compiler->use_frame_pointer) {
+                        if (compiler->use_frame_pointer && !sym->is_static) {
                             emit("\tLHLD __FP\n");
                             emit("\tLXI D, %d\n", sym->address);
                             emit("\tDAD D\n");
@@ -402,120 +511,69 @@ static void compile_expression(ASTNode *node) {
             break;
 
         case AST_ASSIGN: {
-            // Compile right side
+            // Compile right side, result in HL
             compile_expression(node->children[1]);
+            // Store HL to the l-value on the left side
+            emit_store_hl_to_lvalue(node->children[0]);
+            break;
+        }
 
-            // Store to variable or through pointer
+        case AST_COMPOUND_ASSIGN: {
             ASTNode *lhs = node->children[0];
-            if (lhs->type == AST_DEREF) {
-                // Assignment through pointer: *ptr = value
-                emit("\tPUSH H\n");  // Save value
-                // Compile pointer expression
-                compile_expression(lhs->children[0]);
-                emit("\tPOP D\n");  // Target value now in DE, address in HL
-                emit("\tMOV M, E\n");
-                emit("\tINX H\n");
-                emit("\tMOV M, D\n");
-                emit("\tXCHG\n"); // Restore value back to HL
-            } else if (lhs->type == AST_ARRAY_ACCESS) {
-                Symbol *sym = find_symbol(compiler->symtab, lhs->value);
-                if (sym) {
-                    emit("\tPUSH H\n"); // Save RHS value
-                    compile_expression(lhs->children[0]); // Index to HL
-                    if (sym->is_16bit || sym->is_pointer) emit("\tDAD H\n");
-                    emit("\tPUSH H\n"); // Save offset
-                    
-                    // Get base address
-                    if (sym->array_size > 0) {
-                        if (sym->is_global) {
-                            emit("\tLXI H, %s\n", lhs->value);
-                        } else {
-                            if (compiler->use_frame_pointer) {
-                                emit("\tLHLD __FP\n");
-                                emit("\tLXI D, %d\n", sym->address);
-                                emit("\tDAD D\n");
-                            } else {
-                                emit("\tLXI H, __VAR_%s_%s\n", compiler->current_function, lhs->value);
-                            }
-                        }
-                    } else { // Pointer fallback
-                        if (sym->is_global) {
-                            emit("\tLHLD %s\n", lhs->value);
-                        } else {
-                            if (compiler->use_frame_pointer) {
-                                emit("\tLHLD __FP\n");
-                                emit("\tLXI D, %d\n", sym->address);
-                                emit("\tDAD D\n");
-                                emit("\tMOV E, M\n\tINX H\n\tMOV D, M\n\tXCHG\n");
-                            } else {
-                                emit("\tLHLD __VAR_%s_%s\n", compiler->current_function, lhs->value);
-                            }
-                        }
-                    }
-                    
-                    emit("\tPOP D\n"); emit("\tDAD D\n"); // Base + Offset
-                    emit("\tPOP D\n"); // RHS value in DE
-                    
-                    if (sym->is_16bit || sym->is_pointer) {
-                        emit("\tMOV M, E\n\tINX H\n\tMOV M, D\n\tXCHG\n");
-                    } else {
-                        emit("\tMOV M, E\n\tXCHG\n");
-                    }
-                }
-            } else if (lhs->type == AST_IDENT) {
-                Symbol *sym = find_symbol(compiler->symtab, lhs->value);
-                if (sym) {
-                    if (sym->is_16bit) {
-                        if (sym->is_global) {
-                            emit("\tSHLD %s\n", lhs->value);
-                        } else {
-                            if (sym->is_reg) {
-                                if (sym->is_16bit) {
-                                    emit("\tMOV B, H\n\tMOV C, L\n");
-                                } else {
-                                    emit("\tMOV C, L\n\tMVI B, 0\n");
-                                }
-                            } else {
-                            if (compiler->use_frame_pointer) {
-                                emit("\tPUSH H\t; Save assigned value\n");
-                                emit("\tLHLD __FP\n");
-                                emit("\tLXI D, %d\n", sym->address);
-                                emit("\tDAD D\n");
-                                emit("\tPOP D\n");
-                                emit("\tMOV M, E\n");
-                                emit("\tINX H\n");
-                                emit("\tMOV M, D\n");
-                                emit("\tXCHG\t; Restore to %s\n", lhs->value);
-                            } else {
-                                emit("\tSHLD __VAR_%s_%s\n", compiler->current_function, lhs->value);
-                            }
-                            }
-                        }
-                    } else { // 8-bit assignment
-                        if (sym->is_global) {
-                            emit("\tMOV A, L\n");
-                            emit("\tSTA %s\n", lhs->value);
-                        } else {
-                            if (sym->is_reg) {
-                                emit("\tMOV C, L\n\tMVI B, 0\n");
-                            } else {
-                            if (compiler->use_frame_pointer) {
-                                emit("\tPUSH H\n");
-                                emit("\tLHLD __FP\n");
-                                emit("\tLXI D, %d\n", sym->address);
-                                emit("\tDAD D\n");
-                                emit("\tPOP D\n");
-                                emit("\tMOV M, E\n");
-                                emit("\tXCHG\n");
-                            } else {
-                                emit("\tMOV A, L\n");
-                                emit("\tSTA __VAR_%s_%s\n", compiler->current_function, lhs->value);
-                            }
-                            }
-                        }
-                    }
-                }
+            ASTNode *rhs = node->children[1];
+
+            compile_expression(rhs);
+            emit("\tPUSH H\n");
+            compile_expression(lhs);
+            emit("\tPOP D\n");
+
+            const char *op = node->value;
+            if (strcmp(op, "+") == 0) {
+                emit("\tDAD D\n");
+            } else if (strcmp(op, "-") == 0) {
+                emit("\tMOV A, L\n\tSUB E\n\tMOV L, A\n");
+                emit("\tMOV A, H\n\tSBB D\n\tMOV H, A\n");
+            } else if (strcmp(op, "*") == 0) {
+                emit("\tPUSH B\n");
+                emit("\tMOV A, L\n");
+                emit("\tMOV B, E\n");
+                emit("\tMUL B\n");
+                emit("\tPOP B\n");
+            } else if (strcmp(op, "/") == 0) {
+                emit("\tXCHG\n");
+                compiler->uses_div = true;
+                emit("\tCALL __div\n");
             }
+
+            emit_store_hl_to_lvalue(lhs);
+            break;
+        }
+
+        case AST_PRE_INC:
+        case AST_PRE_DEC: {
+            ASTNode *operand = node->children[0];
+            compile_expression(operand);
+            if (node->type == AST_PRE_INC) {
+                emit("\tINX H\n");
+            } else {
+                emit("\tDCX H\n");
+            }
+            emit_store_hl_to_lvalue(operand);
+            break;
+        }
+
+        case AST_POST_INC:
+        case AST_POST_DEC: {
+            ASTNode *operand = node->children[0];
+            compile_expression(operand);
+            emit("\tPUSH H\t; Save original value for postfix op\n");
+            if (node->type == AST_POST_INC) {
+                emit("\tINX H\n");
+            } else {
+                emit("\tDCX H\n");
+            }
+            emit_store_hl_to_lvalue(operand);
+            emit("\tPOP H\t; Restore original value as expression result\n");
             break;
         }
 
@@ -566,7 +624,7 @@ static void compile_expression(ASTNode *node) {
                     if (sym->is_global) {
                         emit("\tLXI H, %s\n", var->value);
                     } else {
-                        if (compiler->use_frame_pointer) {
+                        if (compiler->use_frame_pointer && !sym->is_static) {
                             emit("\tLHLD __FP\n");
                             emit("\tLXI D, %d\n", sym->address);
                             emit("\tDAD D\n");
@@ -594,7 +652,7 @@ static void compile_statement(ASTNode *node) {
             if (node->child_count > 0 && sym->array_size == 0) {
                 compile_expression(node->children[0]);
                 if (sym->is_16bit) {
-                    if (compiler->use_frame_pointer) {
+                    if (compiler->use_frame_pointer && !sym->is_static) {
                         emit("\tPUSH H\t; Save init value\n");
                         emit("\tLHLD __FP\n");
                         emit("\tLXI D, %d\n", sym->address);
@@ -613,7 +671,7 @@ static void compile_statement(ASTNode *node) {
                         emit("\tSHLD __VAR_%s_%s\n", compiler->current_function, var_name);
                     }
                 } else {
-                    if (compiler->use_frame_pointer) {
+                    if (compiler->use_frame_pointer && !sym->is_static) {
                         emit("\tPUSH H\t; Save init value\n");
                         emit("\tLHLD __FP\n");
                         emit("\tLXI D, %d\n", sym->address);
@@ -838,7 +896,7 @@ static void collect_local_vars(ASTNode *node) {
                 allocate_reg = true;
                 compiler->uses_bc = true;
             }
-            add_symbol(compiler->symtab, var_name, false, is_pointer, node->datatype == 2, node->array_size, allocate_reg);
+                add_symbol(compiler->symtab, var_name, false, is_pointer, node->datatype == 2, node->array_size, allocate_reg, node->is_static);
         }
     }
     for (int i = 0; i < node->child_count; i++) {
@@ -849,7 +907,7 @@ static void collect_local_vars(ASTNode *node) {
 static void emit_shadow_stack_pops(Symbol *sym) {
     if (!sym) return;
     emit_shadow_stack_pops(sym->next);
-    if (sym->array_size > 0 || sym->is_reg) return; // Skip statically allocated arrays and registers
+    if (sym->array_size > 0 || sym->is_reg || sym->is_static) return; // Skip statically allocated arrays, registers, and statics
     emit("\tPOP H\t\t; Shadow stack pop\n");
     if (sym->is_16bit) {
         emit("\tSHLD __VAR_%s_%s\n", compiler->current_function, sym->name);
@@ -892,7 +950,7 @@ static void compile_function(ASTNode *node) {
     } else {
         Symbol *sym = compiler->symtab->symbols;
         while (sym) {
-            if (sym->array_size == 0 && !sym->is_reg) {
+            if (sym->array_size == 0 && !sym->is_reg && !sym->is_static) {
                 emit("\tLHLD __VAR_%s_%s\t; Shadow stack push\n", compiler->current_function, sym->name);
                 emit("\tPUSH H\n");
             }
@@ -973,16 +1031,16 @@ static void compile_function(ASTNode *node) {
     emit("\tXCHG\n");
     emit("\tRET\n");
 
-    if (!compiler->use_frame_pointer) {
-        emit("\n; Local variables for %s\n", node->value);
-        Symbol *sym = compiler->symtab->symbols;
-        while (sym) {
-            if (!sym->is_global && !sym->is_reg) {
+    emit("\n; Local variables for %s\n", node->value);
+    Symbol *sym = compiler->symtab->symbols;
+    while (sym) {
+        if (!sym->is_global && !sym->is_reg) {
+            if (!compiler->use_frame_pointer || sym->is_static) {
                 int size = (sym->is_16bit || sym->is_pointer ? 2 : 1) * (sym->array_size > 0 ? sym->array_size : 1);
-                emit("__VAR_%s_%s:\tDS %d\t; %s\n", compiler->current_function, sym->name, size, sym->array_size > 0 ? "array" : (sym->is_pointer ? "pointer" : "variable"));
+                emit("__VAR_%s_%s:\tDS %d\t; %s\n", compiler->current_function, sym->name, size, sym->array_size > 0 ? "array" : (sym->is_pointer ? "pointer" : (sym->is_static ? "static variable" : "variable")));
             }
-            sym = sym->next;
         }
+        sym = sym->next;
     }
 }
 
