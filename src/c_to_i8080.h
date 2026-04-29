@@ -88,6 +88,7 @@ typedef struct Symbol {
     bool is_global;
     bool is_pointer;  // Whether this variable is a pointer type
     bool is_16bit;    // True for int/pointers, False for short/char
+    bool target_is_16bit; // True for int pointer/array, False for char pointer/array
     int array_size;   // Size of the array (0 if not an array)
     bool is_reg;      // True if variable is allocated to a hardware register
     bool is_static;   // True if variable is statically allocated
@@ -133,7 +134,7 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
 // Utility functions
 ASTNode* create_node(ASTNodeType type, const char *value);
 void add_child(ASTNode *parent, ASTNode *child);
-Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool is_pointer, bool is_16bit, int array_size, bool is_reg, bool is_static);
+Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool is_pointer, bool is_16bit, bool target_is_16bit, int array_size, bool is_reg, bool is_static);
 Symbol* find_symbol(SymbolTable *symtab, const char *name);
 
 #endif // C_TO_I8080_H

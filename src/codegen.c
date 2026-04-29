@@ -2,12 +2,13 @@
 
 static Compiler *compiler;
 
-Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool is_pointer, bool is_16bit, int array_size, bool is_reg, bool is_static) {
+Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool is_pointer, bool is_16bit, bool target_is_16bit, int array_size, bool is_reg, bool is_static) {
     Symbol *sym = malloc(sizeof(Symbol));
     sym->name = strdup(name);
     sym->is_global = is_global;
     sym->is_pointer = is_pointer;
     sym->is_16bit = is_16bit;
+    sym->target_is_16bit = target_is_16bit;
     sym->array_size = array_size;
     sym->is_reg = is_reg;
     sym->is_static = is_static;
@@ -259,23 +260,40 @@ static void compile_unary_op(ASTNode *node) {
     }
 }
 
+static bool get_target_is_16bit(ASTNode *expr) {
+    if (!expr) return true;
+    if (expr->type == AST_IDENT) {
+        Symbol *sym = find_symbol(compiler->symtab, expr->value);
+        return sym ? sym->target_is_16bit : true;
+    }
+    if (expr->type == AST_BINARY_OP) {
+        return get_target_is_16bit(expr->children[0]);
+    }
+    return true;
+}
+
 static void emit_store_hl_to_lvalue(ASTNode *lhs) {
     if (lhs->type == AST_DEREF) {
         // Assignment through pointer: *ptr = value
         // The value to store is in HL.
+        bool target_is_16bit = get_target_is_16bit(lhs->children[0]);
         emit("\tPUSH H\n");  // Save value to be stored
         compile_expression(lhs->children[0]); // Pointer address now in HL
         emit("\tPOP D\n");  // Value to be stored now in DE
-        emit("\tMOV M, E\n");
-        emit("\tINX H\n");
-        emit("\tMOV M, D\n");
+        if (target_is_16bit) {
+            emit("\tMOV M, E\n");
+            emit("\tINX H\n");
+            emit("\tMOV M, D\n");
+        } else {
+            emit("\tMOV M, E\n");
+        }
         emit("\tXCHG\n"); // Restore value back to HL
     } else if (lhs->type == AST_ARRAY_ACCESS) {
         Symbol *sym = find_symbol(compiler->symtab, lhs->value);
         if (sym) {
             emit("\tPUSH H\n"); // Save value to be stored
             compile_expression(lhs->children[0]); // Index to HL
-            if (sym->is_16bit || sym->is_pointer) emit("\tDAD H\n");
+            if (sym->target_is_16bit) emit("\tDAD H\n");
             emit("\tPUSH H\n"); // Save offset
             
             // Get base address
@@ -309,7 +327,7 @@ static void emit_store_hl_to_lvalue(ASTNode *lhs) {
             emit("\tPOP D\n"); emit("\tDAD D\n"); // Base + Offset
             emit("\tPOP D\n"); // Value to store in DE
             
-            if (sym->is_16bit || sym->is_pointer) {
+            if (sym->target_is_16bit) {
                 emit("\tMOV M, E\n\tINX H\n\tMOV M, D\n\tXCHG\n");
             } else {
                 emit("\tMOV M, E\n\tXCHG\n");
@@ -442,7 +460,7 @@ static void compile_expression(ASTNode *node) {
             if (sym) {
                 compile_expression(node->children[0]); // Index to HL
                 
-                if (sym->is_16bit || sym->is_pointer) {
+                if (sym->target_is_16bit) {
                     emit("\tDAD H\n"); // Index * 2
                 }
                 emit("\tPUSH H\n"); // Save offset
@@ -478,7 +496,7 @@ static void compile_expression(ASTNode *node) {
                 emit("\tPOP D\n"); // Offset in DE
                 emit("\tDAD D\n"); // Base + Offset in HL
                 
-                if (sym->is_16bit || sym->is_pointer) {
+                if (sym->target_is_16bit) {
                     emit("\tMOV E, M\n\tINX H\n\tMOV D, M\n\tXCHG\n");
                 } else {
                     emit("\tMOV L, M\n\tMVI H, 0\n");
@@ -604,10 +622,16 @@ static void compile_expression(ASTNode *node) {
 
         case AST_DEREF: {
             compile_expression(node->children[0]);
-            emit("\tMOV E, M\n");
-            emit("\tINX H\n");
-            emit("\tMOV D, M\n");
-            emit("\tXCHG\n");
+            bool target_is_16bit = get_target_is_16bit(node->children[0]);
+            if (target_is_16bit) {
+                emit("\tMOV E, M\n");
+                emit("\tINX H\n");
+                emit("\tMOV D, M\n");
+                emit("\tXCHG\n");
+            } else {
+                emit("\tMOV L, M\n");
+                emit("\tMVI H, 0\n");
+            }
             break;
         }
 
@@ -896,7 +920,9 @@ static void collect_local_vars(ASTNode *node) {
                 allocate_reg = true;
                 compiler->uses_bc = true;
             }
-                add_symbol(compiler->symtab, var_name, false, is_pointer, node->datatype == 2, node->array_size, allocate_reg, node->is_static);
+            bool is_16bit = (node->datatype == 2) || is_pointer;
+            bool target_is_16bit = (node->datatype == 2);
+            add_symbol(compiler->symtab, var_name, false, is_pointer, is_16bit, target_is_16bit, node->array_size, allocate_reg, node->is_static);
         }
     }
     for (int i = 0; i < node->child_count; i++) {

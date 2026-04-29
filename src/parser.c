@@ -309,13 +309,13 @@ static ASTNode* parse_statement() {
 
     // Variable declaration
     if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR)) {
-        bool is_16bit = true;
+        bool target_16bit = true;
         if (match(TOK_SHORT)) {
-            is_16bit = false;
+            target_16bit = false;
             next();
             if (match(TOK_INT)) next(); // optional "short int"
         } else if (match(TOK_CHAR)) {
-            is_16bit = false;
+            target_16bit = false;
             next();
         } else {
             next();
@@ -324,12 +324,11 @@ static ASTNode* parse_statement() {
         bool is_pointer = false;
         if (match(TOK_STAR)) {
             is_pointer = true;
-            is_16bit = true; // Pointers are always 16-bit
             next();
         }
         Token *name = expect(TOK_IDENT);
         ASTNode *vardecl = create_node(AST_VARDECL, name->value);
-        vardecl->datatype = is_16bit ? 2 : 1;
+        vardecl->datatype = target_16bit ? 2 : 1;
         vardecl->is_reg = is_reg;
         vardecl->is_static = is_static;
         // Store pointer info in the node value (hacky but simple)
@@ -450,13 +449,13 @@ static ASTNode* parse_statement() {
 
         // Initialization (can be variable declaration or expression)
         if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR)) {
-            bool is_16bit = true;
+            bool target_16bit = true;
             if (match(TOK_SHORT)) {
-                is_16bit = false;
+                target_16bit = false;
                 next();
                 if (match(TOK_INT)) next(); // optional "short int"
             } else if (match(TOK_CHAR)) {
-                is_16bit = false;
+                target_16bit = false;
                 next();
             } else {
                 next();
@@ -464,12 +463,11 @@ static ASTNode* parse_statement() {
             bool is_pointer = false;
             if (match(TOK_STAR)) {
                 is_pointer = true;
-                is_16bit = true;
                 next();
             }
             Token *name = expect(TOK_IDENT);
             ASTNode *vardecl = create_node(AST_VARDECL, name->value);
-            vardecl->datatype = is_16bit ? 2 : 1;
+            vardecl->datatype = target_16bit ? 2 : 1;
             vardecl->is_reg = is_for_reg;
             vardecl->is_static = is_for_static;
             if (is_pointer) {
@@ -556,13 +554,13 @@ static ASTNode* parse_function() {
             next();
         }
         if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR)) {
-            bool is_16bit = true;
+            bool target_16bit = true;
             if (match(TOK_SHORT)) {
-                is_16bit = false;
+                target_16bit = false;
                 next();
                 if (match(TOK_INT)) next(); // optional "short int"
             } else if (match(TOK_CHAR)) {
-                is_16bit = false;
+                target_16bit = false;
                 next();
             } else {
                 next();
@@ -570,12 +568,11 @@ static ASTNode* parse_function() {
             bool is_pointer = false;
             if (match(TOK_STAR)) {
                 is_pointer = true;
-                is_16bit = true; // Pointers are always 16-bit
                 next();
             }
             Token *pname = expect(TOK_IDENT);
             ASTNode *param = create_node(AST_VARDECL, pname->value);
-            param->datatype = is_16bit ? 2 : 1;
+            param->datatype = target_16bit ? 2 : 1;
             param->is_reg = is_param_reg;
             if (is_pointer) {
                 char *ptr_name = malloc(strlen(pname->value) + 2);

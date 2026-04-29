@@ -124,20 +124,35 @@ int main() {
             needs_redraw = 0;
         }
         
-        // Block and wait for the ROM monitor to process a complete key press.
-        // Returns standard ASCII character codes!
-        int key = read_key();
+        // Custom blocking loop to read raw PS/2 codes
+        int is_break = 0;
+        int key = 0;
+        while (key == 0) {
+            int code = check_key();
+            if (code != 0) {
+                if (code == 240) { // 0xF0 (Break Code)
+                    is_break = 1;
+                } else if (code != 224) { // Ignore 0xE0 (Extended Prefix)
+                    if (is_break == 1) {
+                        is_break = 0; // Break sequence finished
+                        key = code;   // Trigger action on key RELEASE!
+                    } else {
+                        // Ignore MAKE codes to prevent orphaned tail-byte bugs
+                    }
+                }
+            }
+        }
         
-        if (key == 119 || key == 87) { // 'w' or 'W'
+        if (key == 117) { // Up Arrow (0x75)
             if (depth < 7) { depth = depth + 1; needs_redraw = 1; }
         }
-        if (key == 115 || key == 83) { // 's' or 'S'
+        if (key == 114) { // Down Arrow (0x72)
             if (depth > 1) { depth = depth - 1; needs_redraw = 1; }
         }
-        if (key == 100 || key == 68) { // 'd' or 'D'
+        if (key == 116) { // Right Arrow (0x74)
             if (skew < 28) { skew = skew + 2; needs_redraw = 1; }
         }
-        if (key == 97 || key == 65) { // 'a' or 'A'
+        if (key == 107) { // Left Arrow (0x6B)
             if (skew > 4) { skew = skew - 2; needs_redraw = 1; }
         }
         
