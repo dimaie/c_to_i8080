@@ -2,7 +2,7 @@
 
 static Compiler *compiler;
 
-Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool is_pointer, bool is_16bit, bool target_is_16bit, int array_size, bool is_reg, bool is_static) {
+Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool is_pointer, bool is_16bit, bool target_is_16bit, int array_size, bool is_reg, bool is_static, const char *initializer_value) {
     Symbol *sym = malloc(sizeof(Symbol));
     sym->name = strdup(name);
     sym->is_global = is_global;
@@ -12,6 +12,7 @@ Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool i
     sym->array_size = array_size;
     sym->is_reg = is_reg;
     sym->is_static = is_static;
+    sym->initializer_value = initializer_value ? strdup(initializer_value) : NULL;
     int count = array_size > 0 ? array_size : 1;
 
     if (!is_global && !is_reg && !is_static) {
@@ -673,7 +674,8 @@ static void compile_statement(ASTNode *node) {
             bool is_pointer = (node->value[0] == '*');
             const char *var_name = is_pointer ? node->value + 1 : node->value;
             Symbol *sym = find_symbol(compiler->symtab, var_name);
-            if (node->child_count > 0 && sym->array_size == 0) {
+            // Do not generate runtime initialization code for static variables.
+            if (node->child_count > 0 && sym->array_size == 0 && !sym->is_static) {
                 compile_expression(node->children[0]);
                 if (sym->is_16bit) {
                     if (compiler->use_frame_pointer && !sym->is_static) {
@@ -922,7 +924,7 @@ static void collect_local_vars(ASTNode *node) {
             }
             bool is_16bit = (node->datatype == 2) || is_pointer;
             bool target_is_16bit = (node->datatype == 2);
-            add_symbol(compiler->symtab, var_name, false, is_pointer, is_16bit, target_is_16bit, node->array_size, allocate_reg, node->is_static);
+            add_symbol(compiler->symtab, var_name, false, is_pointer, is_16bit, target_is_16bit, node->array_size, allocate_reg, node->is_static, node->initializer_value);
         }
     }
     for (int i = 0; i < node->child_count; i++) {
@@ -933,7 +935,7 @@ static void collect_local_vars(ASTNode *node) {
 static void emit_shadow_stack_pops(Symbol *sym) {
     if (!sym) return;
     emit_shadow_stack_pops(sym->next);
-    if (sym->array_size > 0 || sym->is_reg || sym->is_static) return; // Skip statically allocated arrays, registers, and statics
+    if (sym->is_global || sym->array_size > 0 || sym->is_reg || sym->is_static) return; // Skip statically allocated arrays, registers, statics, and globals
     emit("\tPOP H\t\t; Shadow stack pop\n");
     if (sym->is_16bit) {
         emit("\tSHLD __VAR_%s_%s\n", compiler->current_function, sym->name);
@@ -945,16 +947,19 @@ static void emit_shadow_stack_pops(Symbol *sym) {
 
 static void compile_function(ASTNode *node) {
     compiler->current_function = node->value;
+    
+    // Save current global symbols head
+    Symbol *global_syms = compiler->symtab->symbols;
+
     // Reset symbol table for this function
     compiler->symtab->next_address = 0;  // Start offsets at 0
-    compiler->symtab->symbols = NULL;
     compiler->uses_bc = false;
 
     collect_local_vars(node);
     int local_space = compiler->symtab->next_address;
     int pushed_symbol_count = 0;
     for (Symbol *s = compiler->symtab->symbols; s; s = s->next) {
-        if (s->array_size == 0 && !s->is_reg) {
+        if (!s->is_global && s->array_size == 0 && !s->is_reg && !s->is_static) {
             pushed_symbol_count++;
         }
     }
@@ -976,7 +981,7 @@ static void compile_function(ASTNode *node) {
     } else {
         Symbol *sym = compiler->symtab->symbols;
         while (sym) {
-            if (sym->array_size == 0 && !sym->is_reg && !sym->is_static) {
+            if (!sym->is_global && sym->array_size == 0 && !sym->is_reg && !sym->is_static) {
                 emit("\tLHLD __VAR_%s_%s\t; Shadow stack push\n", compiler->current_function, sym->name);
                 emit("\tPUSH H\n");
             }
@@ -1062,12 +1067,23 @@ static void compile_function(ASTNode *node) {
     while (sym) {
         if (!sym->is_global && !sym->is_reg) {
             if (!compiler->use_frame_pointer || sym->is_static) {
-                int size = (sym->is_16bit || sym->is_pointer ? 2 : 1) * (sym->array_size > 0 ? sym->array_size : 1);
-                emit("__VAR_%s_%s:\tDS %d\t; %s\n", compiler->current_function, sym->name, size, sym->array_size > 0 ? "array" : (sym->is_pointer ? "pointer" : (sym->is_static ? "static variable" : "variable")));
+                if (sym->is_static && sym->initializer_value) {
+                    if (sym->is_16bit) {
+                        emit("__VAR_%s_%s:\tDW %s\t; static initialized\n", compiler->current_function, sym->name, sym->initializer_value);
+                    } else {
+                        emit("__VAR_%s_%s:\tDB %s\t; static initialized\n", compiler->current_function, sym->name, sym->initializer_value);
+                    }
+                } else {
+                    int size = (sym->is_16bit || sym->is_pointer ? 2 : 1) * (sym->array_size > 0 ? sym->array_size : 1);
+                    emit("__VAR_%s_%s:\tDS %d\t; %s\n", compiler->current_function, sym->name, size, sym->array_size > 0 ? "array" : (sym->is_pointer ? "pointer" : (sym->is_static ? "static variable" : "variable")));
+                }
             }
         }
         sym = sym->next;
     }
+    
+    // Restore symbol table to only contain globals
+    compiler->symtab->symbols = global_syms;
 }
 
 static ASTNode* find_function(ASTNode *ast, const char *name) {
@@ -1089,6 +1105,9 @@ static void mark_function_used(ASTNode *ast, ASTNode *func) {
 
 static void mark_calls_in_node(ASTNode *ast, ASTNode *node) {
     if (!node) return;
+    if (node->type == AST_STRING) {
+        return; // Safely ignore standard string literals to prevent substring collisions
+    }
     if (node->type == AST_CALL) {
         mark_function_used(ast, find_function(ast, node->value));
     } else if (node->type == AST_ASM) {
@@ -1185,6 +1204,17 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
         }
     }
 
+    // Collect global variables
+    for (int i = 0; i < ast->child_count; i++) {
+        if (ast->children[i]->type == AST_VARDECL) {
+            bool is_pointer = (ast->children[i]->value[0] == '*');
+            const char *var_name = is_pointer ? ast->children[i]->value + 1 : ast->children[i]->value;
+            bool is_16bit = (ast->children[i]->datatype == 2) || is_pointer;
+            bool target_is_16bit = (ast->children[i]->datatype == 2);
+            add_symbol(compiler->symtab, var_name, true, is_pointer, is_16bit, target_is_16bit, ast->children[i]->array_size, false, false, ast->children[i]->initializer_value);
+        }
+    }
+
     // Compile all functions
     for (int i = 0; i < ast->child_count; i++) {
         if (ast->children[i]->type == AST_FUNCTION && ast->children[i]->is_used) {
@@ -1272,6 +1302,25 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
     if (compiler->use_frame_pointer) {
         emit("__FP:\tDS 2\t; Frame pointer for stack variables\n\n");
     }
+    
+    // Emit global variables
+    Symbol *gsym = compiler->symtab->symbols;
+    while (gsym) {
+        if (gsym->is_global) {
+            if (gsym->initializer_value) {
+                if (gsym->is_16bit) {
+                    emit("%s:\tDW %s\t; global initialized\n", gsym->name, gsym->initializer_value);
+                } else {
+                    emit("%s:\tDB %s\t; global initialized\n", gsym->name, gsym->initializer_value);
+                }
+            } else {
+                int size = (gsym->is_16bit || gsym->is_pointer ? 2 : 1) * (gsym->array_size > 0 ? gsym->array_size : 1);
+                emit("%s:\tDS %d\t; global variable\n", gsym->name, size);
+            }
+        }
+        gsym = gsym->next;
+    }
+    
     if (!has_custom_crt) {
         emit("; Stack space (still needed for CALL/RET and temporary values)\n");
         emit("\tORG %04XH\n", compiler->stack_address);

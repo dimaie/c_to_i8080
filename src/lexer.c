@@ -102,11 +102,13 @@ Token* tokenize(const char *source, int *token_count) {
                     int brace_depth = 1;
                     while (*p && brace_depth > 0) {
                         if (*p == '{') brace_depth++;
-                        else if (*p == '}') brace_depth--;
-                        if (brace_depth > 0) {
-                            if (*p == '\n') line++;
-                            p++;
+                        else if (*p == '}') {
+                            brace_depth--;
+                            if (brace_depth == 0) break; // Safely stop at the exact closing brace
                         }
+                        
+                        if (*p == '\n') line++;
+                        p++;
                     }
 
                     // Create a STRING token with the raw assembly code

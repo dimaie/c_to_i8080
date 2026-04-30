@@ -4,9 +4,9 @@
 // Overrides the compiler's default origin and stack configurations.
 asm {
     ORG 2100H        ; Target the SAP-3 Program RAM (0x2000 - 0x3FFF)
-    LXI SP, 3FFFH    ; Initialize Stack Pointer to the very top of Program RAM
-    CALL main        ; Start the C program
-    HLT              ; Halt the processor when main() returns
+    
+    CALL main        ; Start the C program using the Monitor's provided stack
+    RET              ; Return gracefully to the Monitor CLI
 }
 
 // 2. ROM API Wrappers

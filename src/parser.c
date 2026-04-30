@@ -5,6 +5,7 @@ ASTNode* create_node(ASTNodeType type, const char *value) {
     node->type = type;
     node->value = value ? strdup(value) : NULL;
     node->datatype = 2; // Default to 16-bit
+    node->initializer_value = NULL;
     node->array_size = 0;
     node->is_reg = false;
     node->is_static = false;
@@ -28,6 +29,7 @@ void free_ast(ASTNode *node) {
     for (int i = 0; i < node->child_count; i++) {
         free_ast(node->children[i]);
     }
+    free(node->initializer_value);
     free(node->children);
     free(node->value);
     free(node);
@@ -311,7 +313,6 @@ static ASTNode* parse_statement() {
     if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR)) {
         bool target_16bit = true;
         if (match(TOK_SHORT)) {
-            target_16bit = false;
             next();
             if (match(TOK_INT)) next(); // optional "short int"
         } else if (match(TOK_CHAR)) {
@@ -345,7 +346,13 @@ static ASTNode* parse_statement() {
         }
         if (match(TOK_ASSIGN)) {
             next();
-            add_child(vardecl, parse_expression());
+            ASTNode *init_expr = parse_expression();
+            if (is_static && init_expr->type == AST_NUMBER) {
+                vardecl->initializer_value = strdup(init_expr->value);
+                free_ast(init_expr); // Don't add as child, it's handled at compile time
+            } else {
+                add_child(vardecl, init_expr);
+            }
         }
         expect(TOK_SEMICOLON);
         return vardecl;
@@ -451,7 +458,6 @@ static ASTNode* parse_statement() {
         if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR)) {
             bool target_16bit = true;
             if (match(TOK_SHORT)) {
-                target_16bit = false;
                 next();
                 if (match(TOK_INT)) next(); // optional "short int"
             } else if (match(TOK_CHAR)) {
@@ -530,79 +536,123 @@ static ASTNode* parse_statement() {
     return expr;
 }
 
-static ASTNode* parse_function() {
-    // Return type
+static ASTNode* parse_top_level() {
+    // Return type or global variable type
     if (!match(TOK_INT) && !match(TOK_SHORT) && !match(TOK_CHAR) && !match(TOK_VOID)) {
         return NULL;
     }
+    
+    bool target_16bit = true;
     if (match(TOK_SHORT)) {
         next();
+        if (match(TOK_INT)) next(); // optional "short int"
+    } else if (match(TOK_CHAR)) {
+        target_16bit = false;
+        next();
+    } else {
+        next();
     }
-    next();
+    
+    bool is_pointer = false;
     if (match(TOK_STAR)) {
+        is_pointer = true;
         next();
     }
 
     Token *name = expect(TOK_IDENT);
-    ASTNode *func = create_node(AST_FUNCTION, name->value);
 
-    expect(TOK_LPAREN);
-    while (!match(TOK_RPAREN) && !match(TOK_EOF)) {
-        bool is_param_reg = false;
-        if (match(TOK_REG)) {
-            is_param_reg = true;
-            next();
-        }
-        if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR)) {
-            bool target_16bit = true;
-            if (match(TOK_SHORT)) {
-                target_16bit = false;
+    if (match(TOK_LPAREN)) {
+        // It is a function
+        ASTNode *func = create_node(AST_FUNCTION, name->value);
+        next(); // consume '('
+        while (!match(TOK_RPAREN) && !match(TOK_EOF)) {
+            bool is_param_reg = false;
+            if (match(TOK_REG)) {
+                is_param_reg = true;
                 next();
-                if (match(TOK_INT)) next(); // optional "short int"
-            } else if (match(TOK_CHAR)) {
-                target_16bit = false;
+            }
+            if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR)) {
+                bool p_target_16bit = true;
+                if (match(TOK_SHORT)) {
+                    next();
+                    if (match(TOK_INT)) next(); // optional "short int"
+                } else if (match(TOK_CHAR)) {
+                    p_target_16bit = false;
+                    next();
+                } else {
+                    next();
+                }
+                bool p_is_pointer = false;
+                if (match(TOK_STAR)) {
+                    p_is_pointer = true;
+                    next();
+                }
+                Token *pname = expect(TOK_IDENT);
+                ASTNode *param = create_node(AST_VARDECL, pname->value);
+                param->datatype = p_target_16bit ? 2 : 1;
+                param->is_reg = is_param_reg;
+                if (p_is_pointer) {
+                    char *ptr_name = malloc(strlen(pname->value) + 2);
+                    sprintf(ptr_name, "*%s", pname->value);
+                    free(param->value);
+                    param->value = ptr_name;
+                } else if (match(TOK_LBRACKET)) {
+                    next();
+                    if (match(TOK_NUMBER)) next(); // Skip optional size
+                    expect(TOK_RBRACKET);
+                    char *ptr_name = malloc(strlen(pname->value) + 2);
+                    sprintf(ptr_name, "*%s", pname->value);
+                    free(param->value);
+                    param->value = ptr_name;
+                }
+                add_child(func, param);
+            } else {
+                fprintf(stderr, "Expected parameter type at line %d\n", peek()->line);
+                exit(1);
+            }
+            if (match(TOK_COMMA)) {
                 next();
             } else {
-                next();
+                break;
             }
-            bool is_pointer = false;
-            if (match(TOK_STAR)) {
-                is_pointer = true;
-                next();
-            }
-            Token *pname = expect(TOK_IDENT);
-            ASTNode *param = create_node(AST_VARDECL, pname->value);
-            param->datatype = target_16bit ? 2 : 1;
-            param->is_reg = is_param_reg;
-            if (is_pointer) {
-                char *ptr_name = malloc(strlen(pname->value) + 2);
-                sprintf(ptr_name, "*%s", pname->value);
-                free(param->value);
-                param->value = ptr_name;
-            } else if (match(TOK_LBRACKET)) {
-                next();
-                if (match(TOK_NUMBER)) next(); // Skip optional size
-                expect(TOK_RBRACKET);
-                char *ptr_name = malloc(strlen(pname->value) + 2);
-                sprintf(ptr_name, "*%s", pname->value);
-                free(param->value);
-                param->value = ptr_name;
-            }
-            add_child(func, param);
-        } else {
-            fprintf(stderr, "Expected parameter type at line %d\n", peek()->line);
-            exit(1);
         }
-        if (match(TOK_COMMA)) {
-            next();
-        } else {
-            break;
-        }
-    }
-    expect(TOK_RPAREN);
+        expect(TOK_RPAREN);
 
-    add_child(func, parse_block());
-    return func;
+        add_child(func, parse_block());
+        return func;
+    } else {
+        // It is a global variable
+        ASTNode *vardecl = create_node(AST_VARDECL, name->value);
+        vardecl->datatype = target_16bit ? 2 : 1;
+        if (is_pointer) {
+            char *ptr_name = malloc(strlen(name->value) + 2);
+            sprintf(ptr_name, "*%s", name->value);
+            free(vardecl->value);
+            vardecl->value = ptr_name;
+        } else if (match(TOK_LBRACKET)) {
+            next();
+            Token *num = expect(TOK_NUMBER);
+            vardecl->array_size = atoi(num->value);
+            expect(TOK_RBRACKET);
+        }
+        if (match(TOK_ASSIGN)) {
+            next();
+            ASTNode *init_expr = parse_expression();
+            if (init_expr->type == AST_NUMBER) {
+                vardecl->initializer_value = strdup(init_expr->value);
+            } else if (init_expr->type == AST_UNARY_OP && strcmp(init_expr->value, "-") == 0 && init_expr->children[0]->type == AST_NUMBER) {
+                char buffer[32];
+                sprintf(buffer, "-%s", init_expr->children[0]->value);
+                vardecl->initializer_value = strdup(buffer);
+            } else {
+                fprintf(stderr, "Error: Global variables must be initialized with constant numbers at line %d\n", peek()->line);
+                exit(1);
+            }
+            free_ast(init_expr); // Handled at compile time
+        }
+        expect(TOK_SEMICOLON);
+        return vardecl;
+    }
 }
 
 ASTNode* parse(Token *tokens, int token_count) {
@@ -618,9 +668,9 @@ ASTNode* parse(Token *tokens, int token_count) {
             expect(TOK_RBRACE);
             add_child(program, asm_node);
         } else {
-            ASTNode *func = parse_function();
-            if (func) {
-                add_child(program, func);
+            ASTNode *node = parse_top_level();
+            if (node) {
+                add_child(program, node);
             } else {
                 fprintf(stderr, "Error: Unexpected token '%s' at top level (line %d)\n", peek()->value ? peek()->value : "EOF", peek()->line);
                 exit(1);
