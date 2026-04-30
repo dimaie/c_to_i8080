@@ -57,6 +57,7 @@ typedef enum {
     AST_UNARY_OP,
     AST_ASSIGN,
     AST_CALL,
+    AST_INDIRECT_CALL,
     AST_IDENT,
     AST_NUMBER,
     AST_STRING,
@@ -114,6 +115,7 @@ typedef struct {
     bool uses_mul;  // Track if multiplication is used
     bool uses_div;  // Track if division is used
     bool uses_mod;  // Track if modulo is used
+    bool uses_icall; // Track if indirect call trampoline is used
     bool use_frame_pointer; // Track which memory model to use
     int org_address; // Starting memory address
     int stack_address; // Top of the stack address

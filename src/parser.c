@@ -97,12 +97,27 @@ static ASTNode* parse_primary() {
 
 static ASTNode* parse_postfix() {
     ASTNode *left = parse_primary();
-    while (match(TOK_INC) || match(TOK_DEC)) {
-        Token *op = next();
-        ASTNodeType type = (strcmp(op->value, "++") == 0) ? AST_POST_INC : AST_POST_DEC;
-        ASTNode *node = create_node(type, op->value);
-        add_child(node, left);
-        left = node;
+    while (match(TOK_INC) || match(TOK_DEC) || match(TOK_LPAREN)) {
+        if (match(TOK_LPAREN)) {
+            next();
+            ASTNode *call = create_node(AST_INDIRECT_CALL, NULL);
+            add_child(call, left);
+            if (!match(TOK_RPAREN)) {
+                add_child(call, parse_expression());
+                while (match(TOK_COMMA)) {
+                    next();
+                    add_child(call, parse_expression());
+                }
+            }
+            expect(TOK_RPAREN);
+            left = call;
+        } else {
+            Token *op = next();
+            ASTNodeType type = (strcmp(op->value, "++") == 0) ? AST_POST_INC : AST_POST_DEC;
+            ASTNode *node = create_node(type, op->value);
+            add_child(node, left);
+            left = node;
+        }
     }
     return left;
 }
@@ -288,6 +303,40 @@ static ASTNode* parse_expression() {
     return parse_assignment();
 }
 
+static Token* parse_declarator(bool *is_pointer, bool *is_func_ptr) {
+    Token *name = NULL;
+    *is_pointer = false;
+    if (is_func_ptr) *is_func_ptr = false;
+    
+    if (match(TOK_STAR)) {
+        *is_pointer = true;
+        next();
+        name = expect(TOK_IDENT);
+    } else if (match(TOK_LPAREN)) {
+        next(); // '('
+        if (match(TOK_STAR)) {
+            *is_pointer = true;
+            if (is_func_ptr) *is_func_ptr = true;
+            next();
+        }
+        name = expect(TOK_IDENT);
+        expect(TOK_RPAREN);
+        
+        if (match(TOK_LPAREN)) {
+            next(); // '('
+            int paren_depth = 1;
+            while (paren_depth > 0 && !match(TOK_EOF)) {
+                if (match(TOK_LPAREN)) paren_depth++;
+                else if (match(TOK_RPAREN)) paren_depth--;
+                next();
+            }
+        }
+    } else {
+        name = expect(TOK_IDENT);
+    }
+    return name;
+}
+
 static ASTNode* parse_block() {
     expect(TOK_LBRACE);
     ASTNode *block = create_node(AST_BLOCK, NULL);
@@ -310,7 +359,7 @@ static ASTNode* parse_statement() {
     }
 
     // Variable declaration
-    if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR)) {
+    if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR) || match(TOK_VOID)) {
         bool target_16bit = true;
         if (match(TOK_SHORT)) {
             next();
@@ -318,16 +367,15 @@ static ASTNode* parse_statement() {
         } else if (match(TOK_CHAR)) {
             target_16bit = false;
             next();
+        } else if (match(TOK_VOID)) {
+            target_16bit = true;
+            next();
         } else {
             next();
         }
-        // Check for pointer declaration
         bool is_pointer = false;
-        if (match(TOK_STAR)) {
-            is_pointer = true;
-            next();
-        }
-        Token *name = expect(TOK_IDENT);
+        Token *name = parse_declarator(&is_pointer, NULL);
+        
         ASTNode *vardecl = create_node(AST_VARDECL, name->value);
         vardecl->datatype = target_16bit ? 2 : 1;
         vardecl->is_reg = is_reg;
@@ -347,9 +395,22 @@ static ASTNode* parse_statement() {
         if (match(TOK_ASSIGN)) {
             next();
             ASTNode *init_expr = parse_expression();
-            if (is_static && init_expr->type == AST_NUMBER) {
-                vardecl->initializer_value = strdup(init_expr->value);
-                free_ast(init_expr); // Don't add as child, it's handled at compile time
+            if (is_static) {
+                if (init_expr->type == AST_NUMBER) {
+                    vardecl->initializer_value = strdup(init_expr->value);
+                } else if (init_expr->type == AST_UNARY_OP && strcmp(init_expr->value, "-") == 0 && init_expr->children[0]->type == AST_NUMBER) {
+                    char buffer[32];
+                    sprintf(buffer, "-%s", init_expr->children[0]->value);
+                    vardecl->initializer_value = strdup(buffer);
+                } else if (init_expr->type == AST_IDENT) {
+                    vardecl->initializer_value = strdup(init_expr->value);
+                } else if (init_expr->type == AST_ADDROF && init_expr->children[0]->type == AST_IDENT) {
+                    vardecl->initializer_value = strdup(init_expr->children[0]->value);
+                } else {
+                    fprintf(stderr, "Error: Static variables must be initialized with constant numbers or function names at line %d\n", peek()->line);
+                    exit(1);
+                }
+                free_ast(init_expr); 
             } else {
                 add_child(vardecl, init_expr);
             }
@@ -455,7 +516,7 @@ static ASTNode* parse_statement() {
         }
 
         // Initialization (can be variable declaration or expression)
-        if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR)) {
+        if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR) || match(TOK_VOID)) {
             bool target_16bit = true;
             if (match(TOK_SHORT)) {
                 next();
@@ -463,15 +524,15 @@ static ASTNode* parse_statement() {
             } else if (match(TOK_CHAR)) {
                 target_16bit = false;
                 next();
+            } else if (match(TOK_VOID)) {
+                target_16bit = true;
+                next();
             } else {
                 next();
             }
             bool is_pointer = false;
-            if (match(TOK_STAR)) {
-                is_pointer = true;
-                next();
-            }
-            Token *name = expect(TOK_IDENT);
+            Token *name = parse_declarator(&is_pointer, NULL);
+            
             ASTNode *vardecl = create_node(AST_VARDECL, name->value);
             vardecl->datatype = target_16bit ? 2 : 1;
             vardecl->is_reg = is_for_reg;
@@ -489,7 +550,26 @@ static ASTNode* parse_statement() {
             }
             if (match(TOK_ASSIGN)) {
                 next();
-                add_child(vardecl, parse_expression());
+                ASTNode *init_expr = parse_expression();
+                if (is_for_static) {
+                    if (init_expr->type == AST_NUMBER) {
+                        vardecl->initializer_value = strdup(init_expr->value);
+                    } else if (init_expr->type == AST_UNARY_OP && strcmp(init_expr->value, "-") == 0 && init_expr->children[0]->type == AST_NUMBER) {
+                        char buffer[32];
+                        sprintf(buffer, "-%s", init_expr->children[0]->value);
+                        vardecl->initializer_value = strdup(buffer);
+                    } else if (init_expr->type == AST_IDENT) {
+                        vardecl->initializer_value = strdup(init_expr->value);
+                    } else if (init_expr->type == AST_ADDROF && init_expr->children[0]->type == AST_IDENT) {
+                        vardecl->initializer_value = strdup(init_expr->children[0]->value);
+                    } else {
+                        fprintf(stderr, "Error: Static variables must be initialized with constant numbers or function names at line %d\n", peek()->line);
+                        exit(1);
+                    }
+                    free_ast(init_expr);
+                } else {
+                    add_child(vardecl, init_expr);
+                }
             }
             add_child(for_stmt, vardecl);
         } else if (is_for_reg || is_for_static) {
@@ -549,19 +629,18 @@ static ASTNode* parse_top_level() {
     } else if (match(TOK_CHAR)) {
         target_16bit = false;
         next();
+    } else if (match(TOK_VOID)) {
+        target_16bit = true;
+        next();
     } else {
         next();
     }
     
     bool is_pointer = false;
-    if (match(TOK_STAR)) {
-        is_pointer = true;
-        next();
-    }
+    bool is_func_ptr = false;
+    Token *name = parse_declarator(&is_pointer, &is_func_ptr);
 
-    Token *name = expect(TOK_IDENT);
-
-    if (match(TOK_LPAREN)) {
+    if (!is_func_ptr && match(TOK_LPAREN)) {
         // It is a function
         ASTNode *func = create_node(AST_FUNCTION, name->value);
         next(); // consume '('
@@ -571,7 +650,7 @@ static ASTNode* parse_top_level() {
                 is_param_reg = true;
                 next();
             }
-            if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR)) {
+            if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR) || match(TOK_VOID)) {
                 bool p_target_16bit = true;
                 if (match(TOK_SHORT)) {
                     next();
@@ -579,15 +658,15 @@ static ASTNode* parse_top_level() {
                 } else if (match(TOK_CHAR)) {
                     p_target_16bit = false;
                     next();
+                } else if (match(TOK_VOID)) {
+                    p_target_16bit = true;
+                    next();
                 } else {
                     next();
                 }
                 bool p_is_pointer = false;
-                if (match(TOK_STAR)) {
-                    p_is_pointer = true;
-                    next();
-                }
-                Token *pname = expect(TOK_IDENT);
+                Token *pname = parse_declarator(&p_is_pointer, NULL);
+                
                 ASTNode *param = create_node(AST_VARDECL, pname->value);
                 param->datatype = p_target_16bit ? 2 : 1;
                 param->is_reg = is_param_reg;
@@ -644,8 +723,12 @@ static ASTNode* parse_top_level() {
                 char buffer[32];
                 sprintf(buffer, "-%s", init_expr->children[0]->value);
                 vardecl->initializer_value = strdup(buffer);
+            } else if (init_expr->type == AST_IDENT) {
+                vardecl->initializer_value = strdup(init_expr->value);
+            } else if (init_expr->type == AST_ADDROF && init_expr->children[0]->type == AST_IDENT) {
+                vardecl->initializer_value = strdup(init_expr->children[0]->value);
             } else {
-                fprintf(stderr, "Error: Global variables must be initialized with constant numbers at line %d\n", peek()->line);
+                fprintf(stderr, "Error: Global variables must be initialized with constant numbers or function names at line %d\n", peek()->line);
                 exit(1);
             }
             free_ast(init_expr); // Handled at compile time

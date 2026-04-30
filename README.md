@@ -41,19 +41,24 @@ c_to_i8080 input.c output.asm
 ## Supported C Features
 
 ### Data Types
-- `int` - Integer variables
+- `char`, `short`, `int` - 8-bit and 16-bit variables
+- `void` - For functions without return values
 - `int *` - Pointers
+- Arrays (`int arr[10]`)
+- Function Pointers (`int (*fp)(int, int)`)
+- Global and Static variables
 
 ### Operators
 - Arithmetic: `+`, `-`, `*`, `/`, `%`
 - Comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`
 - Logical: `&&`, `||`, `!`
-- Bitwise: `&`, `|`, `^`, `~`
+- Bitwise: `&`, `|`, `^`, `~`, `<<`, `>>`
 - Pointer: `&` (address-of), `*` (dereference)
 
 ### Control Flow
 - `if` / `else`
-- `while` loops
+- `while`, `do-while`, and `for` loops
+- `break` and `continue`
 - `return` statements
 
 ### Functions
@@ -154,8 +159,11 @@ STACK_TOP:
 ✅ **Direct Memory Addressing** - Efficient variable access
 ✅ **Conditional Runtime Functions** - Only includes math functions when used
 ✅ **Full Pointer Support** - `int *ptr`, `&var`, `*ptr`
+✅ **Function Pointers** - Dynamic function calls and callbacks
+✅ **Arrays & Strings** - Native offset calculation and string literals
 ✅ **Inline Assembly** - Embed raw i8080 code with `asm { }`
 ✅ **Optimized Code Generation** - Small, fast output
+✅ **Advanced Memory Models** - Toggle between frame-pointer and high-speed direct addressing
 
 ## Memory Layout
 

@@ -452,6 +452,9 @@ static void compile_expression(ASTNode *node) {
                     emit("\tMOV L, A\n");
                     emit("\tMVI H, 0\n"); // Zero extend
                 }
+            } else {
+                // Treat undefined symbols as function labels/addresses
+                emit("\tLXI H, %s\n", node->value);
             }
             break;
         }
@@ -602,7 +605,36 @@ static void compile_expression(ASTNode *node) {
                 compile_expression(node->children[i]);
                 emit("\tPUSH H\n");
             }
-            emit("\tCALL %s\n", node->value);
+            
+            Symbol *sym = find_symbol(compiler->symtab, node->value);
+            if (sym) {
+                // Indirect call through variable
+                if (sym->is_global) {
+                    emit("\tLHLD %s\n", node->value);
+                } else {
+                    if (sym->is_reg) {
+                        if (sym->is_16bit) {
+                            emit("\tMOV H, B\n\tMOV L, C\n");
+                        } else {
+                            emit("\tMOV L, C\n\tMVI H, 0\n");
+                        }
+                    } else {
+                        if (compiler->use_frame_pointer && !sym->is_static) {
+                            emit("\tLHLD __FP\n");
+                            emit("\tLXI D, %d\n", sym->address);
+                            emit("\tDAD D\n");
+                            emit("\tMOV E, M\n\tINX H\n\tMOV D, M\n\tXCHG\n");
+                        } else {
+                            emit("\tLHLD __VAR_%s_%s\n", compiler->current_function, node->value);
+                        }
+                    }
+                }
+                compiler->uses_icall = true;
+                emit("\tCALL __icall\n");
+            } else {
+                emit("\tCALL %s\n", node->value);
+            }
+            
             // Pop arguments
             if (node->child_count > 0) {
                 if (node->child_count <= 4) {
@@ -620,6 +652,46 @@ static void compile_expression(ASTNode *node) {
                 }
             }
             break;
+
+        case AST_INDIRECT_CALL: {
+            // Push arguments (child 1 to n)
+            for (int i = node->child_count - 1; i >= 1; i--) {
+                compile_expression(node->children[i]);
+                emit("\tPUSH H\n");
+            }
+            
+            // Evaluate function pointer expression
+            ASTNode *target = node->children[0];
+            if (target->type == AST_DEREF) {
+                // In C, dereferencing a function pointer decays back to the pointer itself.
+                // We bypass the memory read of AST_DEREF and just evaluate the pointer address.
+                compile_expression(target->children[0]);
+            } else {
+                compile_expression(target);
+            }
+            
+            compiler->uses_icall = true;
+            emit("\tCALL __icall\n");
+            
+            // Pop arguments
+            int arg_count = node->child_count - 1;
+            if (arg_count > 0) {
+                if (arg_count <= 4) {
+                    emit("\tXCHG\t; Save Return Value\n");
+                    for (int i = 0; i < arg_count; i++) {
+                        emit("\tPOP H\t; Discard argument\n");
+                    }
+                    emit("\tXCHG\t; Restore Return Value\n");
+                } else {
+                    emit("\tXCHG\t; Save Return Value\n");
+                    emit("\tLXI H, %d\n", arg_count * 2);
+                    emit("\tDAD SP\n");
+                    emit("\tSPHL\n");
+                    emit("\tXCHG\t; Restore Return Value\n");
+                }
+            }
+            break;
+        }
 
         case AST_DEREF: {
             compile_expression(node->children[0]);
@@ -642,10 +714,10 @@ static void compile_expression(ASTNode *node) {
             if (var->type == AST_IDENT) {
                 Symbol *sym = find_symbol(compiler->symtab, var->value);
                 if (sym) {
-                        if (sym->is_reg) {
-                            fprintf(stderr, "Error: Cannot take address of register variable '%s'\n", var->value);
-                            exit(1);
-                        }
+                    if (sym->is_reg) {
+                        fprintf(stderr, "Error: Cannot take address of register variable '%s'\n", var->value);
+                        exit(1);
+                    }
                     if (sym->is_global) {
                         emit("\tLXI H, %s\n", var->value);
                     } else {
@@ -657,7 +729,13 @@ static void compile_expression(ASTNode *node) {
                             emit("\tLXI H, __VAR_%s_%s\n", compiler->current_function, var->value);
                         }
                     }
+                } else {
+                    // Treat undefined symbols as function labels/addresses
+                    emit("\tLXI H, %s\n", var->value);
                 }
+            } else {
+                fprintf(stderr, "Error: Cannot take address of a non-variable\n");
+                exit(1);
             }
             break;
         }
@@ -1108,7 +1186,7 @@ static void mark_calls_in_node(ASTNode *ast, ASTNode *node) {
     if (node->type == AST_STRING) {
         return; // Safely ignore standard string literals to prevent substring collisions
     }
-    if (node->type == AST_CALL) {
+    if (node->type == AST_CALL || node->type == AST_IDENT) {
         mark_function_used(ast, find_function(ast, node->value));
     } else if (node->type == AST_ASM) {
         // Protect functions called from inline assembly
@@ -1138,6 +1216,7 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
     compiler->uses_mul = false;
     compiler->uses_div = false;
     compiler->uses_mod = false;
+    compiler->uses_icall = false;
     compiler->current_break_label = -1;
     compiler->current_continue_label = -1;
 
@@ -1296,6 +1375,12 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
         emit("\tMOV A, D\n\tADC B\n\tMOV H, A\n");
         emit("\tPOP B\n");
         emit("\tRET\n\n");
+    }
+
+    if (compiler->uses_icall) {
+        emit("__icall:\n");
+        emit("\t; Jump to function pointer in HL, but keep return address on stack\n");
+        emit("\tPCHL\n\n");
     }
 
     emit("; Runtime variables\n");
