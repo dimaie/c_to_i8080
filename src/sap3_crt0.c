@@ -8,6 +8,13 @@ asm {
     CALL main        ; Start the C program using the Monitor's provided stack
     RET              ; Return gracefully to the Monitor CLI
 }
+    
+void set_inverse(int enable) {
+    asm {
+        POP H       ; Discard 'enable' shadow backup
+        JMP 0034H
+    }
+}
 
 // 2. ROM API Wrappers
 // These use a "Tail-Call" optimization to JMP directly to the ROM.

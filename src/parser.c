@@ -386,7 +386,8 @@ static ASTNode* parse_statement() {
             sprintf(ptr_name, "*%s", name->value);
             free(vardecl->value);
             vardecl->value = ptr_name;
-        } else if (match(TOK_LBRACKET)) {
+        }
+        if (match(TOK_LBRACKET)) {
             next();
             Token *num = expect(TOK_NUMBER);
             vardecl->array_size = atoi(num->value);
@@ -542,7 +543,8 @@ static ASTNode* parse_statement() {
                 sprintf(ptr_name, "*%s", name->value);
                 free(vardecl->value);
                 vardecl->value = ptr_name;
-            } else if (match(TOK_LBRACKET)) {
+            }
+            if (match(TOK_LBRACKET)) {
                 next();
                 Token *num = expect(TOK_NUMBER);
                 vardecl->array_size = atoi(num->value);
@@ -675,14 +677,17 @@ static ASTNode* parse_top_level() {
                     sprintf(ptr_name, "*%s", pname->value);
                     free(param->value);
                     param->value = ptr_name;
-                } else if (match(TOK_LBRACKET)) {
+                }
+                if (match(TOK_LBRACKET)) {
                     next();
                     if (match(TOK_NUMBER)) next(); // Skip optional size
                     expect(TOK_RBRACKET);
-                    char *ptr_name = malloc(strlen(pname->value) + 2);
-                    sprintf(ptr_name, "*%s", pname->value);
-                    free(param->value);
-                    param->value = ptr_name;
+                    if (!p_is_pointer) {
+                        char *ptr_name = malloc(strlen(pname->value) + 2);
+                        sprintf(ptr_name, "*%s", pname->value);
+                        free(param->value);
+                        param->value = ptr_name;
+                    }
                 }
                 add_child(func, param);
             } else {
@@ -708,7 +713,8 @@ static ASTNode* parse_top_level() {
             sprintf(ptr_name, "*%s", name->value);
             free(vardecl->value);
             vardecl->value = ptr_name;
-        } else if (match(TOK_LBRACKET)) {
+        }
+        if (match(TOK_LBRACKET)) {
             next();
             Token *num = expect(TOK_NUMBER);
             vardecl->array_size = atoi(num->value);

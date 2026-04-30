@@ -292,9 +292,10 @@ static void emit_store_hl_to_lvalue(ASTNode *lhs) {
     } else if (lhs->type == AST_ARRAY_ACCESS) {
         Symbol *sym = find_symbol(compiler->symtab, lhs->value);
         if (sym) {
+            bool element_is_16bit = sym->target_is_16bit || (sym->is_pointer && sym->array_size > 0);
             emit("\tPUSH H\n"); // Save value to be stored
             compile_expression(lhs->children[0]); // Index to HL
-            if (sym->target_is_16bit) emit("\tDAD H\n");
+            if (element_is_16bit) emit("\tDAD H\n");
             emit("\tPUSH H\n"); // Save offset
             
             // Get base address
@@ -328,7 +329,7 @@ static void emit_store_hl_to_lvalue(ASTNode *lhs) {
             emit("\tPOP D\n"); emit("\tDAD D\n"); // Base + Offset
             emit("\tPOP D\n"); // Value to store in DE
             
-            if (sym->target_is_16bit) {
+            if (element_is_16bit) {
                 emit("\tMOV M, E\n\tINX H\n\tMOV M, D\n\tXCHG\n");
             } else {
                 emit("\tMOV M, E\n\tXCHG\n");
@@ -462,9 +463,10 @@ static void compile_expression(ASTNode *node) {
         case AST_ARRAY_ACCESS: {
             Symbol *sym = find_symbol(compiler->symtab, node->value);
             if (sym) {
+                bool element_is_16bit = sym->target_is_16bit || (sym->is_pointer && sym->array_size > 0);
                 compile_expression(node->children[0]); // Index to HL
                 
-                if (sym->target_is_16bit) {
+                if (element_is_16bit) {
                     emit("\tDAD H\n"); // Index * 2
                 }
                 emit("\tPUSH H\n"); // Save offset
@@ -500,7 +502,7 @@ static void compile_expression(ASTNode *node) {
                 emit("\tPOP D\n"); // Offset in DE
                 emit("\tDAD D\n"); // Base + Offset in HL
                 
-                if (sym->target_is_16bit) {
+                if (element_is_16bit) {
                     emit("\tMOV E, M\n\tINX H\n\tMOV D, M\n\tXCHG\n");
                 } else {
                     emit("\tMOV L, M\n\tMVI H, 0\n");
