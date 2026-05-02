@@ -133,6 +133,14 @@ int pass_arr(int arr[]) { return arr[0] + arr[1]; }
 int pass_arr_prefix(int[] arr) { return arr[0] + arr[1]; }
 int pass_many(char c, int i, short s, int *p) { return c + i + s + *p; }
 
+// Fastcall modifier test (skips shadow stack)
+_fastcall int pass_fast(int a, int b) {
+    int c = 15;
+    int d = 25;
+    static int offset = 10;
+    return a + b + c + d + offset;
+}
+
 void test_functions() {
     assert_test(pass_char(10) == 11, "12. Functions: char param/return");
     assert_test(pass_int(1000) == 1001, "12. Functions: int param/return");
@@ -148,6 +156,8 @@ void test_functions() {
     assert_test(pass_arr_prefix(arr) == 15, "12. Functions: prefix array param (int[])");
     
     assert_test(pass_many(10, 1000, 500, p) == 1552, "12. Functions: multiple mixed params");
+
+    assert_test(pass_fast(20, 30) == 100, "12. Functions: _fastcall modifier");
 }
 
 int add_op(int a, int b) { return a + b; }

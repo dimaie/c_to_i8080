@@ -23,7 +23,10 @@ The hardware is based on the OneChipBook laptop. `OneChipBook12-TechRef.pdf` is 
 - `0x0DF4` - `0x1FFF`: Unused
 - `0x2000` - `0x3FFF`: 8KB Program RAM
 - `0x4000` - `0x5DFF`: 7680 Bytes Video Graphics RAM (256x240 monochrome, Read/Write)
-- `0x5E00` - `0x9FFF`: Unused
+- `0x5E00` - `0x5FFF`: Unused
+- `0x6000` - `0x63FF`: 1KB Wavetable Audio RAM (Write-Only by CPU)
+- `0x6400` - `0x64FF`: 256 Bytes Audio Sequencer RAM (Write-Only by CPU)
+- `0x6500` - `0x9FFF`: Unused
 - `0xA000` - `0xA77F`: 1920 Bytes Video Text RAM (64x30 text mode, Write-Only)
 - `0xA780` - `0xAFFF`: Unused
 - `0xB000` - `0xB7FF`: 2KB Video Font RAM (8x8 character fonts, 256 chars, Write-Only)
@@ -33,6 +36,11 @@ The hardware is based on the OneChipBook laptop. `OneChipBook12-TechRef.pdf` is 
 - `0xC004`: Cursor Y Position Register (0-29)
 - `0xC005`: Cursor Style Register (0=Hidden, 1=Half Blinking, 2=Full Blinking, 3=Full Solid)
 - `0xC006`: Video Graphics Ink Color Register
+- `0xC010`: Audio Pitch Low Register
+- `0xC011`: Audio Pitch High Register
+- `0xC012`: Audio Volume Register
+- `0xC013`: Audio Control Register (Bit 0: Gate/Play Enable)
+- `0xC014`: Audio Sequencer Enable Register (Bit 0: 1 = Background Hardware Sequencer, 0 = Manual CPU)
 
 ## Architecture Notes
 - The external board reset (`RESET_N`) is active-low, but it is inverted to an active-high `rst` signal at the top level (`Computer1CB12-1_Top.v`). All sub-modules should assume `rst` is active-high.
@@ -40,6 +48,15 @@ The hardware is based on the OneChipBook laptop. `OneChipBook12-TechRef.pdf` is 
 - The ALU evaluates arithmetic/logic operations on the positive clock edge but updates processor flags (Z, C, P, S) on the negative clock edge.
 - Video Mixer Logic: The VGA display pipeline reads both Text and Graphics RAM simultaneously. Text pixels are overlaid transparently on top of graphics pixels, eliminating the need for a dedicated video mode register.
 - **Custom Instructions (Hardware Math):** The standard 8080 ISA has been extended. The unused opcode `0xED` is mapped to `MUL B`. It performs a hardware-accelerated 8-bit unsigned multiplication of the Accumulator (`A`) and register `B`, storing the 16-bit product in the `HL` register pair.
+
+## Audio Synthesizer
+- The system includes a hardware-based wavetable synthesizer using Direct Digital Synthesis (DDS).
+- **Wavetable:** 1KB of dedicated RAM (`0x6000`-`0x63FF`) stores a single-cycle 8-bit waveform (e.g., sine, triangle, sawtooth).
+- **Synthesis Engine:** A 24-bit phase accumulator increments by the 16-bit `Pitch` register value every clock cycle (21.477 MHz). The top 10 bits of the accumulator address the 1KB wavetable.
+- **Pitch Calculation:** `Frequency = Pitch_Step * (21,477,270 / 2^24)`. Each step in the `Pitch` register increases the frequency by approximately `1.28 Hz`.
+- **Output:** The 8-bit wavetable sample is multiplied by the 8-bit `Volume` register. The top 6 bits of the scaled result are routed directly to the left and right 6-bit parallel PCM DAC pins connected to the board's PAM8403 amplifier.
+- **Hardware Sequencer:** When enabled via `0xC014`, the synthesizer stops listening to manual CPU registers and reads directly from the Sequencer RAM (`0x6400`).
+- **Sequencer Format:** 64 steps maximum. Each step is 4 bytes: `[Pitch Low, Pitch High, Volume, Duration]`. Duration is measured in ~16.6ms (60Hz) ticks. A duration of `0` denotes the end of the sequence and causes the hardware to instantly loop back to step 0.
 
 ## System Monitor (ROM) Specification
 A ROM-based system monitor program is being developed gradually to provide basic debugging, execution, and API functionalities.

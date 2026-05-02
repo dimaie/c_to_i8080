@@ -928,7 +928,7 @@ static void compile_statement(ASTNode *node) {
                 I8080_SPHL(); I8080_COMMENT("Restore SP");
                 I8080_POP_HL(); I8080_COMMENT("Get old FP");
                 I8080_STORE_FP(); I8080_COMMENT("Restore FP");
-            } else {
+        } else if (!compiler->current_is_fastcall) {
                 emit_shadow_stack_pops(compiler->symtab->symbols);
             }
             I8080_XCHG(); I8080_COMMENT("Restore return value");
@@ -1246,6 +1246,7 @@ static void emit_static_data(Symbol *sym) {
 
 static void compile_function(ASTNode *node) {
     compiler->current_function = node->value;
+    compiler->current_is_fastcall = node->is_fastcall;
     
     // Save current global symbols head
     Symbol *global_syms = compiler->symtab->symbols;
@@ -1277,7 +1278,7 @@ static void compile_function(ASTNode *node) {
             emit("\tDAD D\n");
             emit("\tSPHL\t\t; Allocate space for %d local bytes\n", local_space);
         }
-    } else {
+    } else if (!compiler->current_is_fastcall) {
         Symbol *sym = compiler->symtab->symbols;
         while (sym) {
             if (!sym->is_global && sym->array_size == 0 && !sym->is_reg && !sym->is_static) {
@@ -1355,7 +1356,7 @@ static void compile_function(ASTNode *node) {
         emit("\tSPHL\n");
         emit("\tPOP H\n");
         emit("\tSHLD __FP\n");
-    } else {
+    } else if (!compiler->current_is_fastcall) {
         emit_shadow_stack_pops(compiler->symtab->symbols);
     }
     emit("\tXCHG\n");

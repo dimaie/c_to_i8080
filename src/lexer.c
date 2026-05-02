@@ -8,7 +8,7 @@
 #endif
 
 static bool is_keyword(const char *str) {
-    const char *keywords[] = {"int", "short", "char", "void", "return", "if", "else", "while", "for", "do", "asm", "break", "continue", "reg", "register", "static", "switch", "case", "default", "goto", "struct", "union", NULL};
+    const char *keywords[] = {"int", "short", "char", "void", "return", "if", "else", "while", "for", "do", "asm", "break", "continue", "reg", "register", "static", "switch", "case", "default", "goto", "struct", "union", "_fastcall", NULL};
     for (int i = 0; keywords[i]; i++) {
         if (strcmp(str, keywords[i]) == 0) return true;
     }
@@ -38,6 +38,7 @@ static TokenType get_keyword_type(const char *str) {
     if (strcmp(str, "goto") == 0) return TOK_GOTO;
     if (strcmp(str, "struct") == 0) return TOK_STRUCT;
     if (strcmp(str, "union") == 0) return TOK_UNION;
+    if (strcmp(str, "_fastcall") == 0) return TOK_FASTCALL;
     return TOK_IDENT;
 }
 

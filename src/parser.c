@@ -22,6 +22,7 @@ ASTNode* create_node(ASTNodeType type, const char *value) {
     node->array_size = 0;
     node->is_reg = false;
     node->is_static = false;
+    node->is_fastcall = false;
     node->is_used = false;
     node->children = NULL;
     node->child_count = 0;
@@ -122,6 +123,7 @@ static const char* token_type_to_string(int type) {
         case TOK_COLON: return "':'";
         case TOK_STRUCT: return "'struct'";
         case TOK_UNION: return "'union'";
+        case TOK_FASTCALL: return "'_fastcall'";
         case TOK_DOT: return "'.'";
         case TOK_ARROW: return "'->'";
         default: return "unknown";
@@ -900,6 +902,12 @@ static ASTNode* parse_top_level() {
         return sdef;
     }
 
+    bool is_fastcall = false;
+    if (match(TOK_FASTCALL)) {
+        is_fastcall = true;
+        next();
+    }
+
     bool is_struct = false;
     char *sname = NULL;
     if (match(TOK_STRUCT) || match(TOK_UNION)) {
@@ -949,6 +957,7 @@ static ASTNode* parse_top_level() {
     if (!is_func_ptr && match(TOK_LPAREN)) {
         // It is a function
         ASTNode *func = create_node(AST_FUNCTION, name->value);
+        func->is_fastcall = is_fastcall;
         next(); // consume '('
         while (!match(TOK_RPAREN) && !match(TOK_EOF)) {
             bool is_param_reg = false;
@@ -1033,6 +1042,7 @@ static ASTNode* parse_top_level() {
         // It is a global variable
         ASTNode *vardecl = create_node(AST_VARDECL, name->value);
         vardecl->datatype = target_16bit ? 2 : 1;
+        vardecl->is_fastcall = is_fastcall;
         vardecl->struct_name = sname ? strdup(sname) : NULL;
         if (pointer_level > 0) {
             char *ptr_name = malloc(strlen(name->value) + pointer_level + 1);

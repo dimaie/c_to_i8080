@@ -18,7 +18,7 @@
 // Token types
 typedef enum {
     TOK_EOF,
-    TOK_INT, TOK_SHORT, TOK_CHAR, TOK_VOID, TOK_RETURN, TOK_IF, TOK_ELSE, TOK_WHILE, TOK_FOR, TOK_DO, TOK_ASM, TOK_BREAK, TOK_REG, TOK_STATIC, TOK_CONTINUE, TOK_GOTO, TOK_STRUCT, TOK_UNION, TOK_DOT, TOK_ARROW,
+    TOK_INT, TOK_SHORT, TOK_CHAR, TOK_VOID, TOK_RETURN, TOK_IF, TOK_ELSE, TOK_WHILE, TOK_FOR, TOK_DO, TOK_ASM, TOK_BREAK, TOK_REG, TOK_STATIC, TOK_CONTINUE, TOK_GOTO, TOK_STRUCT, TOK_UNION, TOK_FASTCALL, TOK_DOT, TOK_ARROW,
     TOK_IDENT, TOK_NUMBER, TOK_STRING,
     TOK_LPAREN, TOK_RPAREN, TOK_LBRACE, TOK_RBRACE, TOK_LBRACKET, TOK_RBRACKET,
     TOK_SEMICOLON, TOK_COMMA,
@@ -84,6 +84,7 @@ typedef struct ASTNode {
     int array_size;   // Size of the array (0 if not an array)
     bool is_reg;      // True if variable is declared with the 'reg' keyword
     bool is_static;   // True if variable is declared with the 'static' keyword
+    bool is_fastcall; // True if function skips shadow stack overhead
     bool is_used;     // Track if function is used (Dead Code Elimination)
     struct ASTNode **children;
     int child_count;
@@ -145,6 +146,7 @@ typedef struct {
     bool uses_mul;  // Track if multiplication is used
     bool uses_div;  // Track if division is used
     bool uses_mod;  // Track if modulo is used
+    bool current_is_fastcall; // Track if current function skips shadow stack
     bool uses_icall; // Track if indirect call trampoline is used
     bool use_frame_pointer; // Track which memory model to use
     int org_address; // Starting memory address
