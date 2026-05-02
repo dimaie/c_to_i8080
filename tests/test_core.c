@@ -145,9 +145,9 @@ void test_pointers() {
     *ptr = 99;
     assert_test(val == 99, "8. Pointer Dereference Assign");
 
-    int arr;
-    arr = 10; arr = 20; arr = 30;
-    assert_test(arr == 10 && arr == 20 && arr == 30, "8. Arrays (arr[idx])");
+    int arr[3];
+    arr[0] = 10; arr[1] = 20; arr[2] = 30;
+    assert_test(arr[0] == 10 && arr[1] == 20 && arr[2] == 30, "8. Arrays (arr[idx])");
     
     int *aptr = arr;
     assert_test(*aptr == 10, "8. Array Decay to Pointer");
@@ -155,21 +155,41 @@ void test_pointers() {
     int *aptr2 = aptr + 2;
     assert_test(*aptr2 == 20, "8. Pointer Math (int +2 bytes)");
 
-    char carr;
-    carr = 5; carr = 15; carr = 25;
-    assert_test(carr == 5 && carr == 15 && carr == 25, "8. Arrays (char arr[idx])");
+    char carr[3];
+    carr[0] = 5; carr[1] = 15; carr[2] = 25;
+    assert_test(carr[0] == 5 && carr[1] == 15 && carr[2] == 25, "8. Arrays (char arr[idx])");
     
     char *cptr = carr;
     char *cptr2 = cptr + 1;
     assert_test(*cptr2 == 15, "8. Pointer Math (char +1 byte)");
 
-    short sarr;
-    sarr = 100; sarr = 200; sarr = 300;
-    assert_test(sarr == 100 && sarr == 200 && sarr == 300, "8. Arrays (short arr[idx])");
+    short sarr[3];
+    sarr[0] = 100; sarr[1] = 200; sarr[2] = 300;
+    assert_test(sarr[0] == 100 && sarr[1] == 200 && sarr[2] == 300, "8. Arrays (short arr[idx])");
     
     short *sptr = sarr;
     short *sptr2 = sptr + 2;
     assert_test(*sptr2 == 200, "8. Pointer Math (short +2 bytes)");
+}
+
+void test_arrays() {
+    int arr[3] = {10, 20, 30};
+    assert_test(arr[0] == 10 && arr[1] == 20 && arr[2] == 30, "9. Arrays: Local init");
+
+    int arr_auto[] = {1, 2, 3, 4};
+    assert_test(arr_auto[0] == 1 && arr_auto[3] == 4, "9. Arrays: Auto-sized init (int arr[])");
+
+    int[] arr_prefix = {5, 6, 7, 8};
+    assert_test(arr_prefix[0] == 5 && arr_prefix[3] == 8, "9. Arrays: Prefix style (int[] arr)");
+
+    char str[] = "Hi";
+    assert_test(str[0] == 'H' && str[1] == 'i' && str[2] == 0, "9. Arrays: String init");
+
+    static int s_arr[3] = {100, 200};
+    assert_test(s_arr[0] == 100 && s_arr[1] == 200 && s_arr[2] == 0, "9. Arrays: Static init");
+
+    static char s_str[] = "ABC";
+    assert_test(s_str[0] == 'A' && s_str[1] == 'B' && s_str[2] == 'C' && s_str[3] == 0, "9. Arrays: Static string init");
 }
 
 // ---------------------------------------------------------
@@ -212,6 +232,9 @@ int main() {
     
     test_pointers();
     current_sp = get_sp(); check_sp("test_pointers");
+    
+    test_arrays();
+    current_sp = get_sp(); check_sp("test_arrays");
     
     print_newline();
     print_string("CORE TESTS EXECUTED.");

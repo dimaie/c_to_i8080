@@ -755,40 +755,81 @@ static void compile_statement(ASTNode *node) {
             const char *var_name = is_pointer ? node->value + 1 : node->value;
             Symbol *sym = find_symbol(compiler->symtab, var_name);
             // Do not generate runtime initialization code for static variables.
-            if (node->child_count > 0 && sym->array_size == 0 && !sym->is_static) {
-                compile_expression(node->children[0]);
-                if (sym->is_16bit) {
-                    if (compiler->use_frame_pointer && !sym->is_static) {
+            if (node->child_count > 0 && !sym->is_static) {
+                if (sym->array_size > 0) {
+                    for (int i = 0; i < node->child_count && i < sym->array_size; i++) {
+                        compile_expression(node->children[i]);
                         emit("\tPUSH H\t; Save init value\n");
-                        emit("\tLHLD __FP\n");
-                        emit("\tLXI D, %d\n", sym->address);
-                        emit("\tDAD D\n");
-                        emit("\tPOP D\n");
-                        emit("\tMOV M, E\n");
-                        emit("\tINX H\n");
-                        emit("\tMOV M, D\n");
-                    } else if (sym->is_reg) {
-                        if (sym->is_16bit) {
-                            emit("\tMOV B, H\n\tMOV C, L\n");
+                        if (compiler->use_frame_pointer) {
+                            emit("\tLHLD __FP\n");
+                            emit("\tLXI D, %d\n", sym->address + i * (sym->is_16bit ? 2 : 1));
+                            emit("\tDAD D\n");
                         } else {
-                            emit("\tMOV C, L\n\tMVI B, 0\n");
+                            emit("\tLXI H, __VAR_%s_%s+%d\n", compiler->current_function, var_name, i * (sym->is_16bit ? 2 : 1));
                         }
-                    } else {
-                        emit("\tSHLD __VAR_%s_%s\n", compiler->current_function, var_name);
+                        emit("\tPOP D\n");
+                        if (sym->is_16bit) {
+                            emit("\tMOV M, E\n");
+                            emit("\tINX H\n");
+                            emit("\tMOV M, D\n");
+                        } else {
+                            emit("\tMOV M, E\n");
+                        }
+                    }
+                    if (node->child_count < sym->array_size) {
+                        emit("\tLXI D, 0\t; Zero padding\n");
+                        for (int i = node->child_count; i < sym->array_size; i++) {
+                            if (compiler->use_frame_pointer) {
+                                emit("\tLHLD __FP\n");
+                                emit("\tLXI B, %d\n", sym->address + i * (sym->is_16bit ? 2 : 1));
+                                emit("\tDAD B\n");
+                            } else {
+                                emit("\tLXI H, __VAR_%s_%s+%d\n", compiler->current_function, var_name, i * (sym->is_16bit ? 2 : 1));
+                            }
+                            if (sym->is_16bit) {
+                                emit("\tMOV M, E\n");
+                                emit("\tINX H\n");
+                                emit("\tMOV M, D\n");
+                            } else {
+                                emit("\tMOV M, E\n");
+                            }
+                        }
                     }
                 } else {
-                    if (compiler->use_frame_pointer && !sym->is_static) {
-                        emit("\tPUSH H\t; Save init value\n");
-                        emit("\tLHLD __FP\n");
-                        emit("\tLXI D, %d\n", sym->address);
-                        emit("\tDAD D\n");
-                        emit("\tPOP D\n");
-                        emit("\tMOV M, E\n"); // Store low byte
-                    } else if (sym->is_reg) {
-                        emit("\tMOV C, L\n\tMVI B, 0\n");
+                    compile_expression(node->children[0]);
+                    if (sym->is_16bit) {
+                        if (compiler->use_frame_pointer) {
+                            emit("\tPUSH H\t; Save init value\n");
+                            emit("\tLHLD __FP\n");
+                            emit("\tLXI D, %d\n", sym->address);
+                            emit("\tDAD D\n");
+                            emit("\tPOP D\n");
+                            emit("\tMOV M, E\n");
+                            emit("\tINX H\n");
+                            emit("\tMOV M, D\n");
+                        } else if (sym->is_reg) {
+                            if (sym->is_16bit) {
+                                emit("\tMOV B, H\n\tMOV C, L\n");
+                            } else {
+                                emit("\tMOV C, L\n\tMVI B, 0\n");
+                            }
+                        } else {
+                            emit("\tSHLD __VAR_%s_%s\n", compiler->current_function, var_name);
+                        }
                     } else {
-                        emit("\tMOV A, L\n");
-                        emit("\tSTA __VAR_%s_%s\n", compiler->current_function, var_name);
+                        if (compiler->use_frame_pointer) {
+                            emit("\tPUSH H\t; Save init value\n");
+                            emit("\tLHLD __FP\n");
+                            emit("\tLXI D, %d\n", sym->address);
+                            emit("\tDAD D\n");
+                            emit("\tPOP D\n");
+                            emit("\tMOV M, E\n"); // Store low byte
+                        } else if (sym->is_reg) {
+                            emit("\tMOV C, L\n\tMVI B, 0\n");
+                        } else {
+                            emit("\tMOV A, L\n");
+                            emit("\tSTA __VAR_%s_%s\n", compiler->current_function, var_name);
+                        }
                     }
                 }
             }

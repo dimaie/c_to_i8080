@@ -337,6 +337,102 @@ static Token* parse_declarator(bool *is_pointer, bool *is_func_ptr) {
     return name;
 }
 
+static void parse_initializer(ASTNode *vardecl, bool is_static, bool is_array) {
+    if (match(TOK_LBRACE)) {
+        next();
+        if (is_static) {
+            char init_buf[4096] = {0};
+            int count = 0;
+            while (!match(TOK_RBRACE) && !match(TOK_EOF)) {
+                ASTNode *init_expr = parse_expression();
+                if (init_expr->type == AST_NUMBER) {
+                    if (count > 0) strcat(init_buf, ",");
+                    strcat(init_buf, init_expr->value);
+                } else if (init_expr->type == AST_UNARY_OP && strcmp(init_expr->value, "-") == 0 && init_expr->children[0]->type == AST_NUMBER) {
+                    if (count > 0) strcat(init_buf, ",");
+                    strcat(init_buf, "-");
+                    strcat(init_buf, init_expr->children[0]->value);
+                } else {
+                    fprintf(stderr, "Error: Static arrays must be initialized with constant numbers at line %d\n", peek()->line);
+                    exit(1);
+                }
+                free_ast(init_expr);
+                count++;
+                if (match(TOK_COMMA)) next();
+                else break;
+            }
+            expect(TOK_RBRACE);
+            if (vardecl->array_size == 0) vardecl->array_size = count;
+            else {
+                while (count < vardecl->array_size) {
+                    if (count > 0) strcat(init_buf, ",");
+                    strcat(init_buf, "0");
+                    count++;
+                }
+            }
+            vardecl->initializer_value = strdup(init_buf);
+        } else {
+            int count = 0;
+            while (!match(TOK_RBRACE) && !match(TOK_EOF)) {
+                ASTNode *init_expr = parse_expression();
+                add_child(vardecl, init_expr);
+                count++;
+                if (match(TOK_COMMA)) next();
+                else break;
+            }
+            expect(TOK_RBRACE);
+            if (vardecl->array_size == 0) vardecl->array_size = count;
+        }
+    } else {
+        ASTNode *init_expr = parse_expression();
+        if (is_array && init_expr->type == AST_STRING) {
+            int len = strlen(init_expr->value);
+            if (vardecl->array_size == 0) vardecl->array_size = len + 1;
+            if (is_static) {
+                char init_buf[4096] = {0};
+                for (int i = 0; i < len; i++) {
+                    char num[16];
+                    sprintf(num, "%d,", (unsigned char)init_expr->value[i]);
+                    strcat(init_buf, num);
+                }
+                strcat(init_buf, "0");
+                int count = len + 1;
+                while (count < vardecl->array_size) {
+                    strcat(init_buf, ",0");
+                    count++;
+                }
+                vardecl->initializer_value = strdup(init_buf);
+            } else {
+                for (int i = 0; i < len; i++) {
+                    char num[16];
+                    sprintf(num, "%d", (unsigned char)init_expr->value[i]);
+                    add_child(vardecl, create_node(AST_NUMBER, num));
+                }
+                add_child(vardecl, create_node(AST_NUMBER, "0"));
+            }
+            free_ast(init_expr);
+        } else if (is_static) {
+            if (init_expr->type == AST_NUMBER) {
+                vardecl->initializer_value = strdup(init_expr->value);
+            } else if (init_expr->type == AST_UNARY_OP && strcmp(init_expr->value, "-") == 0 && init_expr->children[0]->type == AST_NUMBER) {
+                char buffer[32];
+                sprintf(buffer, "-%s", init_expr->children[0]->value);
+                vardecl->initializer_value = strdup(buffer);
+            } else if (init_expr->type == AST_IDENT) {
+                vardecl->initializer_value = strdup(init_expr->value);
+            } else if (init_expr->type == AST_ADDROF && init_expr->children[0]->type == AST_IDENT) {
+                vardecl->initializer_value = strdup(init_expr->children[0]->value);
+            } else {
+                fprintf(stderr, "Error: Static variables must be initialized with constant numbers or function names at line %d\n", peek()->line);
+                exit(1);
+            }
+            free_ast(init_expr);
+        } else {
+            add_child(vardecl, init_expr);
+        }
+    }
+}
+
 static ASTNode* parse_block() {
     expect(TOK_LBRACE);
     ASTNode *block = create_node(AST_BLOCK, NULL);
@@ -373,6 +469,19 @@ static ASTNode* parse_statement() {
         } else {
             next();
         }
+        
+        bool is_array_prefix = false;
+        int prefix_array_size = 0;
+        if (match(TOK_LBRACKET)) {
+            is_array_prefix = true;
+            next();
+            if (match(TOK_NUMBER)) {
+                Token *num = next();
+                prefix_array_size = atoi(num->value);
+            }
+            expect(TOK_RBRACKET);
+        }        
+        
         bool is_pointer = false;
         Token *name = parse_declarator(&is_pointer, NULL);
         
@@ -387,34 +496,20 @@ static ASTNode* parse_statement() {
             free(vardecl->value);
             vardecl->value = ptr_name;
         }
+        bool is_array = is_array_prefix;
+        vardecl->array_size = prefix_array_size;
         if (match(TOK_LBRACKET)) {
+            is_array = true;
             next();
-            Token *num = expect(TOK_NUMBER);
-            vardecl->array_size = atoi(num->value);
+            if (match(TOK_NUMBER)) {
+                Token *num = next();
+                vardecl->array_size = atoi(num->value);
+            }
             expect(TOK_RBRACKET);
         }
         if (match(TOK_ASSIGN)) {
             next();
-            ASTNode *init_expr = parse_expression();
-            if (is_static) {
-                if (init_expr->type == AST_NUMBER) {
-                    vardecl->initializer_value = strdup(init_expr->value);
-                } else if (init_expr->type == AST_UNARY_OP && strcmp(init_expr->value, "-") == 0 && init_expr->children[0]->type == AST_NUMBER) {
-                    char buffer[32];
-                    sprintf(buffer, "-%s", init_expr->children[0]->value);
-                    vardecl->initializer_value = strdup(buffer);
-                } else if (init_expr->type == AST_IDENT) {
-                    vardecl->initializer_value = strdup(init_expr->value);
-                } else if (init_expr->type == AST_ADDROF && init_expr->children[0]->type == AST_IDENT) {
-                    vardecl->initializer_value = strdup(init_expr->children[0]->value);
-                } else {
-                    fprintf(stderr, "Error: Static variables must be initialized with constant numbers or function names at line %d\n", peek()->line);
-                    exit(1);
-                }
-                free_ast(init_expr); 
-            } else {
-                add_child(vardecl, init_expr);
-            }
+            parse_initializer(vardecl, is_static, is_array);
         }
         expect(TOK_SEMICOLON);
         return vardecl;
@@ -531,6 +626,19 @@ static ASTNode* parse_statement() {
             } else {
                 next();
             }
+
+            bool is_array_prefix = false;
+            int prefix_array_size = 0;
+            if (match(TOK_LBRACKET)) {
+                is_array_prefix = true;
+                next();
+                if (match(TOK_NUMBER)) {
+                    Token *num = next();
+                    prefix_array_size = atoi(num->value);
+                }
+                expect(TOK_RBRACKET);
+            }
+
             bool is_pointer = false;
             Token *name = parse_declarator(&is_pointer, NULL);
             
@@ -544,34 +652,20 @@ static ASTNode* parse_statement() {
                 free(vardecl->value);
                 vardecl->value = ptr_name;
             }
+            bool is_array = is_array_prefix;
+            vardecl->array_size = prefix_array_size;
             if (match(TOK_LBRACKET)) {
+                is_array = true;
                 next();
-                Token *num = expect(TOK_NUMBER);
-                vardecl->array_size = atoi(num->value);
+                if (match(TOK_NUMBER)) {
+                    Token *num = next();
+                    vardecl->array_size = atoi(num->value);
+                }
                 expect(TOK_RBRACKET);
             }
             if (match(TOK_ASSIGN)) {
                 next();
-                ASTNode *init_expr = parse_expression();
-                if (is_for_static) {
-                    if (init_expr->type == AST_NUMBER) {
-                        vardecl->initializer_value = strdup(init_expr->value);
-                    } else if (init_expr->type == AST_UNARY_OP && strcmp(init_expr->value, "-") == 0 && init_expr->children[0]->type == AST_NUMBER) {
-                        char buffer[32];
-                        sprintf(buffer, "-%s", init_expr->children[0]->value);
-                        vardecl->initializer_value = strdup(buffer);
-                    } else if (init_expr->type == AST_IDENT) {
-                        vardecl->initializer_value = strdup(init_expr->value);
-                    } else if (init_expr->type == AST_ADDROF && init_expr->children[0]->type == AST_IDENT) {
-                        vardecl->initializer_value = strdup(init_expr->children[0]->value);
-                    } else {
-                        fprintf(stderr, "Error: Static variables must be initialized with constant numbers or function names at line %d\n", peek()->line);
-                        exit(1);
-                    }
-                    free_ast(init_expr);
-                } else {
-                    add_child(vardecl, init_expr);
-                }
+                parse_initializer(vardecl, is_for_static, is_array);
             }
             add_child(for_stmt, vardecl);
         } else if (is_for_reg || is_for_static) {
@@ -638,6 +732,18 @@ static ASTNode* parse_top_level() {
         next();
     }
     
+    bool is_array_prefix = false;
+    int prefix_array_size = 0;
+    if (match(TOK_LBRACKET)) {
+        is_array_prefix = true;
+        next();
+        if (match(TOK_NUMBER)) {
+            Token *num = next();
+            prefix_array_size = atoi(num->value);
+        }
+        expect(TOK_RBRACKET);
+    }
+    
     bool is_pointer = false;
     bool is_func_ptr = false;
     Token *name = parse_declarator(&is_pointer, &is_func_ptr);
@@ -666,6 +772,15 @@ static ASTNode* parse_top_level() {
                 } else {
                     next();
                 }
+
+                bool is_p_array_prefix = false;
+                if (match(TOK_LBRACKET)) {
+                    is_p_array_prefix = true;
+                    next();
+                    if (match(TOK_NUMBER)) next(); // Skip optional size
+                    expect(TOK_RBRACKET);
+                }
+
                 bool p_is_pointer = false;
                 Token *pname = parse_declarator(&p_is_pointer, NULL);
                 
@@ -678,10 +793,12 @@ static ASTNode* parse_top_level() {
                     free(param->value);
                     param->value = ptr_name;
                 }
-                if (match(TOK_LBRACKET)) {
-                    next();
-                    if (match(TOK_NUMBER)) next(); // Skip optional size
-                    expect(TOK_RBRACKET);
+                if (match(TOK_LBRACKET) || is_p_array_prefix) {
+                    if (!is_p_array_prefix) {
+                        next();
+                        if (match(TOK_NUMBER)) next(); // Skip optional size
+                        expect(TOK_RBRACKET);
+                    }
                     if (!p_is_pointer) {
                         char *ptr_name = malloc(strlen(pname->value) + 2);
                         sprintf(ptr_name, "*%s", pname->value);
@@ -714,30 +831,20 @@ static ASTNode* parse_top_level() {
             free(vardecl->value);
             vardecl->value = ptr_name;
         }
+        bool is_array = is_array_prefix;
+        vardecl->array_size = prefix_array_size;
         if (match(TOK_LBRACKET)) {
+            is_array = true;
             next();
-            Token *num = expect(TOK_NUMBER);
-            vardecl->array_size = atoi(num->value);
+            if (match(TOK_NUMBER)) {
+                Token *num = next();
+                vardecl->array_size = atoi(num->value);
+            }
             expect(TOK_RBRACKET);
         }
         if (match(TOK_ASSIGN)) {
             next();
-            ASTNode *init_expr = parse_expression();
-            if (init_expr->type == AST_NUMBER) {
-                vardecl->initializer_value = strdup(init_expr->value);
-            } else if (init_expr->type == AST_UNARY_OP && strcmp(init_expr->value, "-") == 0 && init_expr->children[0]->type == AST_NUMBER) {
-                char buffer[32];
-                sprintf(buffer, "-%s", init_expr->children[0]->value);
-                vardecl->initializer_value = strdup(buffer);
-            } else if (init_expr->type == AST_IDENT) {
-                vardecl->initializer_value = strdup(init_expr->value);
-            } else if (init_expr->type == AST_ADDROF && init_expr->children[0]->type == AST_IDENT) {
-                vardecl->initializer_value = strdup(init_expr->children[0]->value);
-            } else {
-                fprintf(stderr, "Error: Global variables must be initialized with constant numbers or function names at line %d\n", peek()->line);
-                exit(1);
-            }
-            free_ast(init_expr); // Handled at compile time
+            parse_initializer(vardecl, true, is_array);
         }
         expect(TOK_SEMICOLON);
         return vardecl;

@@ -156,14 +156,60 @@ Token* tokenize(const char *source, int *token_count) {
         // String literals
         if (*p == '"') {
             p++;
-            const char *start = p;
-            while (*p && *p != '"') p++;
-            int len = (int)(p - start);
-            tok->value = malloc(len + 1);
-            strncpy(tok->value, start, len);
-            tok->value[len] = '\0';
+            int str_capacity = 64;
+            char *str_buf = malloc(str_capacity);
+            int str_len = 0;
+            while (*p && *p != '"') {
+                if (str_len + 2 >= str_capacity) {
+                    str_capacity *= 2;
+                    str_buf = realloc(str_buf, str_capacity);
+                }
+                if (*p == '\\') {
+                    p++;
+                    switch (*p) {
+                        case 'n': str_buf[str_len++] = '\n'; break;
+                        case 'r': str_buf[str_len++] = '\r'; break;
+                        case 't': str_buf[str_len++] = '\t'; break;
+                        case '0': str_buf[str_len++] = '\0'; break;
+                        case '\\': str_buf[str_len++] = '\\'; break;
+                        case '"': str_buf[str_len++] = '"'; break;
+                        default: str_buf[str_len++] = *p; break;
+                    }
+                } else {
+                    str_buf[str_len++] = *p;
+                }
+                p++;
+            }
+            str_buf[str_len] = '\0';
+            tok->value = str_buf;
             tok->type = TOK_STRING;
             if (*p) p++;
+            continue;
+        }
+
+        // Character literals
+        if (*p == '\'') {
+            p++;
+            char c_val = *p;
+            if (*p == '\\') {
+                p++;
+                switch (*p) {
+                    case 'n': c_val = '\n'; break;
+                    case 'r': c_val = '\r'; break;
+                    case 't': c_val = '\t'; break;
+                    case '0': c_val = '\0'; break;
+                    case '\\': c_val = '\\'; break;
+                    case '\'': c_val = '\''; break;
+                    default: c_val = *p; break;
+                }
+            }
+            p++;
+            if (*p == '\'') p++;
+            
+            char num_buf[16];
+            sprintf(num_buf, "%d", (unsigned char)c_val);
+            tok->value = strdup(num_buf);
+            tok->type = TOK_NUMBER;
             continue;
         }
 

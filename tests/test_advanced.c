@@ -105,7 +105,8 @@ char pass_char(char c) { return c + 1; }
 int pass_int(int i) { return i + 1; }
 short pass_short(short s) { return s + 1; }
 int* pass_ptr(int *p) { return p + 1; }
-int pass_arr(int arr[]) { return arr + arr; }
+int pass_arr(int arr[]) { return arr[0] + arr[1]; }
+int pass_arr_prefix(int[] arr) { return arr[0] + arr[1]; }
 int pass_many(char c, int i, short s, int *p) { return c + i + s + *p; }
 
 void test_functions() {
@@ -117,9 +118,10 @@ void test_functions() {
     int *p = &val;
     assert_test(pass_ptr(p) == p + 1, "12. Functions: pointer param/return");
     
-    int arr;
-    arr = 5; arr = 10;
+    int arr[2];
+    arr[0] = 5; arr[1] = 10;
     assert_test(pass_arr(arr) == 15, "12. Functions: array param");
+    assert_test(pass_arr_prefix(arr) == 15, "12. Functions: prefix array param (int[])");
     
     assert_test(pass_many(10, 1000, 500, p) == 1552, "12. Functions: multiple mixed params");
 }
