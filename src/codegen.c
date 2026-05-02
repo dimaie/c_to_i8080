@@ -2,7 +2,88 @@
 
 static Compiler *compiler;
 
-Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, int pointer_level, bool is_16bit, bool target_is_16bit, int array_size, bool is_reg, bool is_static, const char *initializer_value) {
+StructDef* find_struct(const char *name) {
+    if (!name) return NULL;
+    StructDef *def = compiler->structs;
+    while (def) {
+        if (strcmp(def->name, name) == 0) return def;
+        def = def->next;
+    }
+    return NULL;
+}
+
+StructMember* find_struct_member(StructDef *def, const char *name) {
+    if (!def || !name) return NULL;
+    StructMember *mem = def->members;
+    while (mem) {
+        if (strcmp(mem->name, name) == 0) return mem;
+        mem = mem->next;
+    }
+    return NULL;
+}
+
+const char* get_expr_struct_name(ASTNode *expr) {
+    if (!expr) return NULL;
+    if (expr->type == AST_IDENT) {
+        Symbol *sym = find_symbol(compiler->symtab, expr->value);
+        return sym ? sym->struct_name : NULL;
+    }
+    if (expr->type == AST_MEMBER_ACCESS || expr->type == AST_PTR_MEMBER_ACCESS) {
+        const char *parent_sname = get_expr_struct_name(expr->children[0]);
+        StructDef *def = find_struct(parent_sname);
+        if (def) {
+            StructMember *mem = find_struct_member(def, expr->value);
+            if (mem) return mem->struct_name;
+        }
+        return NULL;
+    }
+    if (expr->type == AST_ARRAY_ACCESS || expr->type == AST_DEREF || expr->type == AST_ADDROF) {
+        return get_expr_struct_name(expr->children[0]);
+    }
+    return NULL;
+}
+
+static int find_flat_element(const char *struct_name, int pointer_level, bool is_16bit, int array_size, 
+                             int target_flat_index, int *current_flat_index, int current_offset, 
+                             int *out_offset, bool *out_is_16bit) {
+    int count = array_size > 0 ? array_size : 1;
+    if (struct_name && pointer_level == 0) {
+        StructDef *def = find_struct(struct_name);
+        if (!def) return 0;
+        for (int i = 0; i < count; i++) {
+            int start_offset = current_offset + i * def->size;
+            StructMember *mem = def->members;
+            if (def->is_union) {
+                if (mem && find_flat_element(mem->struct_name, mem->pointer_level, mem->is_16bit, mem->array_size,
+                                             target_flat_index, current_flat_index, start_offset + mem->offset,
+                                             out_offset, out_is_16bit)) {
+                    return 1;
+                }
+            } else {
+                while (mem) {
+                    if (find_flat_element(mem->struct_name, mem->pointer_level, mem->is_16bit, mem->array_size,
+                                      target_flat_index, current_flat_index, start_offset + mem->offset,
+                                      out_offset, out_is_16bit)) {
+                        return 1;
+                    }
+                    mem = mem->next;
+                }
+            }
+        }
+    } else {
+        for (int i = 0; i < count; i++) {
+            if (*current_flat_index == target_flat_index) {
+                *out_offset = current_offset + i * (is_16bit ? 2 : 1);
+                *out_is_16bit = is_16bit;
+                return 1;
+            }
+            (*current_flat_index)++;
+        }
+    }
+    return 0;
+}
+
+Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, int pointer_level, bool is_16bit, bool target_is_16bit, int array_size, bool is_reg, bool is_static, ASTNode *decl_node, const char *struct_name) {
     Symbol *sym = malloc(sizeof(Symbol));
     sym->name = strdup(name);
     sym->is_global = is_global;
@@ -10,15 +91,46 @@ Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, int po
     sym->is_pointer = pointer_level > 0;
     sym->is_16bit = is_16bit;
     sym->target_is_16bit = target_is_16bit;
-    sym->array_size = array_size;
     sym->is_reg = is_reg;
     sym->is_static = is_static;
-    sym->initializer_value = initializer_value ? strdup(initializer_value) : NULL;
+    sym->struct_name = struct_name ? strdup(struct_name) : NULL;
+    sym->decl_node = decl_node;
+    
+    if (array_size == -1 && decl_node && decl_node->child_count > 0) {
+        int prim_count = 0;
+        if (struct_name && pointer_level == 0) {
+            int current_flat = 0;
+            int dummy_offset; bool dummy_16bit;
+            while (find_flat_element(struct_name, 0, false, 1, prim_count, &current_flat, 0, &dummy_offset, &dummy_16bit)) {
+                prim_count++;
+                current_flat = 0;
+            }
+        }
+        if (prim_count == 0) prim_count = 1;
+        array_size = decl_node->child_count / prim_count;
+        if (array_size == 0) array_size = 1;
+        decl_node->array_size = array_size;
+    } else if (array_size == -1) {
+        array_size = 1;
+    }
+    sym->array_size = array_size;
+
+    int item_size = 1;
+    if (struct_name && pointer_level == 0) {
+        StructDef *sdef = find_struct(struct_name);
+        if (sdef) item_size = sdef->size;
+    } else if (is_16bit) {
+        item_size = 2;
+    }
+    
     int count = array_size > 0 ? array_size : 1;
+    int total_size = item_size * count;
+
+    sym->total_size = total_size;
 
     if (!is_global && !is_reg && !is_static) {
         // Allocate offset on stack from frame pointer
-        symtab->next_address += (is_16bit ? 2 : 1) * count;
+        symtab->next_address += total_size;
         sym->address = -symtab->next_address;
     } else {
         sym->address = 0;
@@ -169,10 +281,17 @@ static int get_expr_pointer_level(ASTNode *expr) {
         return level > 0 ? level - 1 : 0;
     }
     if (expr->type == AST_ARRAY_ACCESS) {
-        Symbol *sym = find_symbol(compiler->symtab, expr->value);
-        if (!sym) return 0;
-        int effective_level = sym->pointer_level + (sym->array_size > 0 ? 1 : 0);
-        return effective_level > 0 ? effective_level - 1 : 0;
+        int level = get_expr_pointer_level(expr->children[0]);
+        return level > 0 ? level - 1 : 0;
+    }
+    if (expr->type == AST_MEMBER_ACCESS || expr->type == AST_PTR_MEMBER_ACCESS) {
+        const char *sname = get_expr_struct_name(expr->children[0]);
+        StructDef *def = find_struct(sname);
+        StructMember *mem = find_struct_member(def, expr->value);
+        if (!mem) return 0;
+        int level = mem->pointer_level;
+        if (mem->array_size > 0) level++;
+        return level;
     }
     if (expr->type == AST_ADDROF) {
         return get_expr_pointer_level(expr->children[0]) + 1;
@@ -188,19 +307,38 @@ static bool get_target_is_16bit(ASTNode *expr) {
     
     ASTNode *base = expr;
     while (base) {
-        if (base->type == AST_IDENT || base->type == AST_ARRAY_ACCESS) {
+        if (base->type == AST_IDENT) {
             Symbol *sym = find_symbol(compiler->symtab, base->value);
             if (sym) return sym->target_is_16bit;
+            return true;
+        } else if (base->type == AST_MEMBER_ACCESS || base->type == AST_PTR_MEMBER_ACCESS) {
+            const char *sname = get_expr_struct_name(base->children[0]);
+            StructDef *def = find_struct(sname);
+            StructMember *mem = find_struct_member(def, base->value);
+            if (mem) return mem->is_16bit;
             return true;
         } else if (base->type == AST_DEREF || base->type == AST_ADDROF) {
             base = base->children[0];
         } else if (base->type == AST_BINARY_OP) {
+            base = base->children[0];
+        } else if (base->type == AST_ARRAY_ACCESS) {
             base = base->children[0];
         } else {
             break;
         }
     }
     return true;
+}
+
+static int get_expr_size(ASTNode *expr) {
+    if (!expr) return 1;
+    if (get_expr_pointer_level(expr) > 0) return 2;
+    const char *sname = get_expr_struct_name(expr);
+    if (sname) {
+        StructDef *def = find_struct(sname);
+        if (def) return def->size;
+    }
+    return get_target_is_16bit(expr) ? 2 : 1;
 }
 
 static void emit_store_hl_to_lvalue(ASTNode *lhs) {
@@ -218,51 +356,51 @@ static void emit_store_hl_to_lvalue(ASTNode *lhs) {
         }
         I8080_XCHG(); // Restore value back to HL
     } else if (lhs->type == AST_ARRAY_ACCESS) {
-        Symbol *sym = find_symbol(compiler->symtab, lhs->value);
-        if (sym) {
-            bool target_is_16bit = get_target_is_16bit(lhs);
-            I8080_PUSH_HL(); // Save value to be stored
-            compile_expression(lhs->children[0]); // Index to HL
-            if (target_is_16bit) I8080_ADD_HL_HL();
-            I8080_PUSH_HL(); // Save offset
-            
-            // Get base address
-            if (sym->array_size > 0) {
-                if (sym->is_global) {
-                    I8080_LOAD_IMM_16(lhs->value);
-                } else {
-                    if (compiler->use_frame_pointer && !sym->is_static) {
-                        I8080_LOAD_FP();
-                        I8080_ADD_FP_OFFSET(sym->address);
-                    } else {
-                        I8080_LOAD_LOCAL_ADDR(compiler->current_function, lhs->value);
-                    }
-                }
-            } else { // Pointer fallback
-                if (sym->is_global) {
-                    I8080_LOAD_GLOBAL_16(lhs->value);
-                } else {
-                    if (compiler->use_frame_pointer && !sym->is_static) {
-                        I8080_LOAD_FP();
-                        I8080_ADD_FP_OFFSET(sym->address);
-                        I8080_READ_16_AT_HL();
-                        I8080_XCHG();
-                    } else {
-                        I8080_LOAD_LOCAL_16(compiler->current_function, lhs->value);
-                    }
-                }
-            }
-            
-            I8080_POP_DE(); I8080_ADD_HL_DE(); // Base + Offset
-            I8080_POP_DE(); // Value to store in DE
-            
-            if (target_is_16bit) {
-                I8080_WRITE_16_AT_HL();
-                I8080_XCHG();
-            } else {
-                I8080_WRITE_8_AT_HL();
-                I8080_XCHG();
-            }
+        int item_size = get_expr_size(lhs);
+        bool target_is_16bit = get_target_is_16bit(lhs);
+        I8080_PUSH_HL(); // Save value to be stored
+        compile_expression(lhs->children[1]); // Index to HL
+        if (item_size == 2) {
+            I8080_ADD_HL_HL(); // Index * 2
+        } else if (item_size > 2) {
+            I8080_XCHG(); // Index to DE
+            I8080_LOAD_IMM_16_INT(item_size);
+            I8080_MUL_INLINE(); // HL = Index * item_size
+        }
+        I8080_PUSH_HL(); // Save offset
+        
+        compile_expression(lhs->children[0]); // Base address
+        
+        I8080_POP_DE(); I8080_ADD_HL_DE(); // Base + Offset
+        I8080_POP_DE(); // Value to store in DE
+        
+        if (target_is_16bit) {
+            I8080_WRITE_16_AT_HL();
+            I8080_XCHG();
+        } else {
+            I8080_WRITE_8_AT_HL();
+            I8080_XCHG();
+        }
+    } else if (lhs->type == AST_MEMBER_ACCESS || lhs->type == AST_PTR_MEMBER_ACCESS) {
+        I8080_PUSH_HL(); // Save value
+        compile_expression(lhs->children[0]); // Base address
+        
+        const char *sname = get_expr_struct_name(lhs->children[0]);
+        StructDef *def = find_struct(sname);
+        StructMember *mem = find_struct_member(def, lhs->value);
+        
+        if (mem->offset > 0) {
+            I8080_LOAD_IMM_DE_INT(mem->offset);
+            I8080_ADD_HL_DE();
+        }
+        
+        I8080_POP_DE(); // Value in DE
+        if (mem->is_16bit) {
+            I8080_WRITE_16_AT_HL();
+            I8080_XCHG();
+        } else {
+            I8080_WRITE_8_AT_HL();
+            I8080_XCHG();
         }
     } else if (lhs->type == AST_IDENT) {
         Symbol *sym = find_symbol(compiler->symtab, lhs->value);
@@ -321,8 +459,8 @@ static void compile_expression(ASTNode *node) {
         case AST_IDENT: {
             Symbol *sym = find_symbol(compiler->symtab, node->value);
             if (sym) {
-                if (sym->array_size > 0) {
-                    // Array decays to pointer (load base address into HL)
+                if (sym->array_size > 0 || (sym->struct_name && sym->pointer_level == 0)) {
+                    // Array or Struct decays to pointer (load base address into HL)
                     if (sym->is_global) {
                         I8080_LOAD_IMM_16(node->value);
                     } else {
@@ -381,47 +519,57 @@ static void compile_expression(ASTNode *node) {
         }
 
         case AST_ARRAY_ACCESS: {
-            Symbol *sym = find_symbol(compiler->symtab, node->value);
-            if (sym) {
-                bool target_is_16bit = get_target_is_16bit(node);
-                compile_expression(node->children[0]); // Index to HL
-                
+            int item_size = get_expr_size(node);
+            bool target_is_16bit = get_target_is_16bit(node);
+            compile_expression(node->children[1]); // Index to HL
+            
+            if (item_size == 2) {
+                I8080_ADD_HL_HL(); // Index * 2
+            } else if (item_size > 2) {
+                I8080_XCHG(); // Index to DE
+                I8080_LOAD_IMM_16_INT(item_size);
+                I8080_MUL_INLINE(); // HL = Index * item_size
+            }
+            I8080_PUSH_HL(); // Save offset
+            
+            compile_expression(node->children[0]); // Base address
+            
+            I8080_POP_DE(); // Offset in DE
+            I8080_ADD_HL_DE(); // Base + Offset in HL
+            
+            bool is_struct = (get_expr_pointer_level(node) == 0 && get_expr_struct_name(node) != NULL);
+            if (!is_struct) {
                 if (target_is_16bit) {
-                    I8080_ADD_HL_HL(); // Index * 2
+                    I8080_READ_16_AT_HL();
+                    I8080_XCHG();
+                } else {
+                    I8080_READ_8_TO_L();
                 }
-                I8080_PUSH_HL(); // Save offset
-                
-                // Get base address
-                if (sym->array_size > 0) {
-                    if (sym->is_global) {
-                        I8080_LOAD_IMM_16(node->value);
-                    } else {
-                        if (compiler->use_frame_pointer && !sym->is_static) {
-                            I8080_LOAD_FP();
-                            I8080_ADD_FP_OFFSET(sym->address);
-                        } else {
-                            I8080_LOAD_LOCAL_ADDR(compiler->current_function, node->value);
-                        }
-                    }
-                } else { // Pointer fallback
-                    if (sym->is_global) {
-                        I8080_LOAD_GLOBAL_16(node->value);
-                    } else {
-                        if (compiler->use_frame_pointer && !sym->is_static) {
-                            I8080_LOAD_FP();
-                            I8080_ADD_FP_OFFSET(sym->address);
-                            I8080_READ_16_AT_HL();
-                            I8080_XCHG();
-                        } else {
-                            I8080_LOAD_LOCAL_16(compiler->current_function, node->value);
-                        }
-                    }
-                }
-                
-                I8080_POP_DE(); // Offset in DE
-                I8080_ADD_HL_DE(); // Base + Offset in HL
-                
-                if (target_is_16bit) {
+            }
+            break;
+        }
+
+        case AST_MEMBER_ACCESS:
+        case AST_PTR_MEMBER_ACCESS: {
+            compile_expression(node->children[0]); // Base address to HL
+            
+            const char *sname = get_expr_struct_name(node->children[0]);
+            StructDef *def = find_struct(sname);
+            StructMember *mem = find_struct_member(def, node->value);
+            
+            if (!mem) {
+                fprintf(stderr, "Error: Unknown member '%s'\n", node->value);
+                exit(1);
+            }
+            
+            if (mem->offset > 0) {
+                I8080_LOAD_IMM_DE_INT(mem->offset);
+                I8080_ADD_HL_DE();
+            }
+            
+            // Read value unless it's a nested struct or array (naturally decay)
+            if (!mem->struct_name && mem->array_size == 0) {
+                if (mem->is_16bit) {
                     I8080_READ_16_AT_HL();
                     I8080_XCHG();
                 } else {
@@ -664,6 +812,35 @@ static void compile_expression(ASTNode *node) {
                     // Treat undefined symbols as function labels/addresses
                     I8080_LOAD_IMM_16(var->value);
                 }
+            } else if (var->type == AST_ARRAY_ACCESS) {
+                int item_size = get_expr_size(var);
+                compile_expression(var->children[1]); // Index to HL
+                if (item_size == 2) {
+                    I8080_ADD_HL_HL(); // Index * 2
+                } else if (item_size > 2) {
+                    I8080_XCHG(); // Index to DE
+                    I8080_LOAD_IMM_16_INT(item_size);
+                    I8080_MUL_INLINE(); // HL = Index * item_size
+                }
+                I8080_PUSH_HL(); // Save offset
+                compile_expression(var->children[0]); // Base address
+                I8080_POP_DE(); // Offset in DE
+                I8080_ADD_HL_DE(); // Base + Offset in HL
+            } else if (var->type == AST_MEMBER_ACCESS || var->type == AST_PTR_MEMBER_ACCESS) {
+                compile_expression(var->children[0]); // Base address to HL
+                const char *sname = get_expr_struct_name(var->children[0]);
+                StructDef *def = find_struct(sname);
+                StructMember *mem = find_struct_member(def, var->value);
+                if (!mem) {
+                    fprintf(stderr, "Error: Unknown member '%s'\n", var->value);
+                    exit(1);
+                }
+                if (mem->offset > 0) {
+                    I8080_LOAD_IMM_DE_INT(mem->offset);
+                    I8080_ADD_HL_DE();
+                }
+            } else if (var->type == AST_DEREF) {
+                compile_expression(var->children[0]); // &*ptr -> ptr natively
             } else {
                 fprintf(stderr, "Error: Cannot take address of a non-variable\n");
                 exit(1);
@@ -704,70 +881,33 @@ static void compile_statement(ASTNode *node) {
             Symbol *sym = find_symbol(compiler->symtab, var_name);
             // Do not generate runtime initialization code for static variables.
             if (node->child_count > 0 && !sym->is_static) {
-                if (sym->array_size > 0) {
-                    for (int i = 0; i < node->child_count && i < sym->array_size; i++) {
-                        compile_expression(node->children[i]);
-                        I8080_PUSH_HL(); I8080_COMMENT("Save init value");
-                        if (compiler->use_frame_pointer) {
-                            I8080_LOAD_FP();
-                            I8080_ADD_FP_OFFSET(sym->address + i * (sym->is_16bit ? 2 : 1));
-                        } else {
-                            I8080_LOAD_LOCAL_ADDR_OFFSET(compiler->current_function, var_name, i * (sym->is_16bit ? 2 : 1));
-                        }
-                        I8080_POP_DE();
-                        if (sym->is_16bit) {
-                            I8080_WRITE_16_AT_HL();
-                        } else {
-                            I8080_WRITE_8_AT_HL();
-                        }
-                    }
-                    if (node->child_count < sym->array_size) {
-                        I8080_LOAD_IMM_DE_INT(0); I8080_COMMENT("Zero padding");
-                        for (int i = node->child_count; i < sym->array_size; i++) {
-                            if (compiler->use_frame_pointer) {
-                                I8080_LOAD_FP();
-                                I8080_ADD_FP_OFFSET_BC(sym->address + i * (sym->is_16bit ? 2 : 1));
-                            } else {
-                                I8080_LOAD_LOCAL_ADDR_OFFSET(compiler->current_function, var_name, i * (sym->is_16bit ? 2 : 1));
-                            }
-                            if (sym->is_16bit) {
-                                I8080_WRITE_16_AT_HL();
-                            } else {
-                                I8080_WRITE_8_AT_HL();
-                            }
-                        }
-                    }
-                } else {
-                    compile_expression(node->children[0]);
-                    if (sym->is_16bit) {
-                        if (compiler->use_frame_pointer) {
-                            I8080_PUSH_HL(); I8080_COMMENT("Save init value");
-                            I8080_LOAD_FP();
-                            I8080_ADD_FP_OFFSET(sym->address);
-                            I8080_POP_DE();
-                            I8080_WRITE_16_AT_HL();
-                        } else if (sym->is_reg) {
-                            if (sym->is_16bit) {
-                                I8080_COPY_HL_TO_BC();
-                            } else {
-                                I8080_COPY_L_TO_C();
-                            }
-                        } else {
-                            I8080_STORE_LOCAL_16(compiler->current_function, var_name);
-                        }
+                int total_elements = 0;
+                int current_flat = 0;
+                int dummy_offset; bool dummy_16bit;
+                while (find_flat_element(sym->struct_name, sym->pointer_level, sym->is_16bit, sym->array_size,
+                                         total_elements, &current_flat, 0, &dummy_offset, &dummy_16bit)) {
+                    total_elements++;
+                    current_flat = 0;
+                }
+                
+                for (int i = 0; i < total_elements; i++) {
+                    int offset; bool is_16bit;
+                    current_flat = 0;
+                    find_flat_element(sym->struct_name, sym->pointer_level, sym->is_16bit, sym->array_size,
+                                      i, &current_flat, 0, &offset, &is_16bit);
+                                      
+                    if (i < node->child_count) compile_expression(node->children[i]);
+                    else I8080_LOAD_IMM_16_INT(0); // Zero padding
+                    
+                    if (sym->is_reg) {
+                        if (is_16bit) I8080_COPY_HL_TO_BC(); else I8080_COPY_L_TO_C();
                     } else {
+                        I8080_PUSH_HL();
                         if (compiler->use_frame_pointer) {
-                            I8080_PUSH_HL(); I8080_COMMENT("Save init value");
-                            I8080_LOAD_FP();
-                            I8080_ADD_FP_OFFSET(sym->address);
-                            I8080_POP_DE();
-                            I8080_WRITE_8_AT_HL(); // Store low byte
-                        } else if (sym->is_reg) {
-                            I8080_COPY_L_TO_C();
-                        } else {
-                            I8080_COPY_L_TO_A();
-                            I8080_STORE_LOCAL_8(compiler->current_function, var_name);
-                        }
+                            I8080_LOAD_FP(); I8080_ADD_FP_OFFSET(sym->address + offset);
+                        } else I8080_LOAD_LOCAL_ADDR_OFFSET(compiler->current_function, var_name, offset);
+                        I8080_POP_DE();
+                        if (is_16bit) I8080_WRITE_16_AT_HL(); else I8080_WRITE_8_AT_HL();
                     }
                 }
             }
@@ -1039,7 +1179,7 @@ static void collect_local_vars(ASTNode *node) {
             }
             bool is_16bit = (node->datatype == 2) || (pointer_level > 0);
             bool target_is_16bit = (node->datatype == 2);
-            add_symbol(compiler->symtab, var_name, false, pointer_level, is_16bit, target_is_16bit, node->array_size, allocate_reg, node->is_static, node->initializer_value);
+            add_symbol(compiler->symtab, var_name, false, pointer_level, is_16bit, target_is_16bit, node->array_size, allocate_reg, node->is_static, node, node->struct_name);
         }
     }
     for (int i = 0; i < node->child_count; i++) {
@@ -1057,6 +1197,50 @@ static void emit_shadow_stack_pops(Symbol *sym) {
     } else {
         emit("\tMOV A, L\n");
         emit("\tSTA __VAR_%s_%s\n", compiler->current_function, sym->name);
+    }
+}
+
+static void emit_static_data(Symbol *sym) {
+    int total_elements = 0;
+    int current_flat = 0;
+    int dummy_offset; bool dummy_16bit;
+    while (find_flat_element(sym->struct_name, sym->pointer_level, sym->is_16bit, sym->array_size,
+                             total_elements, &current_flat, 0, &dummy_offset, &dummy_16bit)) {
+        total_elements++;
+        current_flat = 0;
+    }
+    
+    int expected_offset = 0;
+    for (int i = 0; i < total_elements; i++) {
+        int offset; bool is_16bit;
+        current_flat = 0;
+        find_flat_element(sym->struct_name, sym->pointer_level, sym->is_16bit, sym->array_size,
+                          i, &current_flat, 0, &offset, &is_16bit);
+                          
+        if (offset > expected_offset) {
+            emit("\tDS %d\n", offset - expected_offset);
+            expected_offset = offset;
+        }
+
+        char val_str[128] = "0";
+        if (sym->decl_node && i < sym->decl_node->child_count) {
+            ASTNode *expr = sym->decl_node->children[i];
+            if (expr->type == AST_NUMBER) strcpy(val_str, expr->value);
+            else if (expr->type == AST_UNARY_OP && strcmp(expr->value, "-") == 0 && expr->children[0]->type == AST_NUMBER) sprintf(val_str, "-%s", expr->children[0]->value);
+            else if (expr->type == AST_IDENT) strcpy(val_str, expr->value);
+            else if (expr->type == AST_ADDROF && expr->children[0]->type == AST_IDENT) strcpy(val_str, expr->children[0]->value);
+            else { fprintf(stderr, "Error: Static/Global '%s' requires constant expressions\n", sym->name); exit(1); }
+        }
+        if (is_16bit) {
+            emit("\tDW %s\n", val_str);
+            expected_offset += 2;
+        } else {
+            emit("\tDB %s\n", val_str);
+            expected_offset += 1;
+        }
+    }
+    if (expected_offset < sym->total_size) {
+        emit("\tDS %d\n", sym->total_size - expected_offset);
     }
 }
 
@@ -1182,15 +1366,11 @@ static void compile_function(ASTNode *node) {
     while (sym) {
         if (!sym->is_global && !sym->is_reg) {
             if (!compiler->use_frame_pointer || sym->is_static) {
-                if (sym->is_static && sym->initializer_value) {
-                    if (sym->is_16bit) {
-                        emit("__VAR_%s_%s:\tDW %s\t; static initialized\n", compiler->current_function, sym->name, sym->initializer_value);
-                    } else {
-                        emit("__VAR_%s_%s:\tDB %s\t; static initialized\n", compiler->current_function, sym->name, sym->initializer_value);
-                    }
+                if (sym->is_static && sym->decl_node && sym->decl_node->child_count > 0) {
+                    emit("__VAR_%s_%s:\t; static initialized\n", compiler->current_function, sym->name);
+                    emit_static_data(sym);
                 } else {
-                    int size = (sym->is_16bit || sym->is_pointer ? 2 : 1) * (sym->array_size > 0 ? sym->array_size : 1);
-                    emit("__VAR_%s_%s:\tDS %d\t; %s\n", compiler->current_function, sym->name, size, sym->array_size > 0 ? "array" : (sym->is_pointer ? "pointer" : (sym->is_static ? "static variable" : "variable")));
+                    emit("__VAR_%s_%s:\tDS %d\t; %s\n", compiler->current_function, sym->name, sym->total_size, sym->array_size > 0 ? "array" : (sym->is_pointer ? "pointer" : (sym->is_static ? "static variable" : "variable")));
                 }
             }
         }
@@ -1256,6 +1436,7 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
     compiler->uses_icall = false;
     compiler->current_break_label = -1;
     compiler->current_continue_label = -1;
+    compiler->structs = NULL;
 
     bool has_custom_crt = false;
     for (int i = 0; i < ast->child_count; i++) {
@@ -1320,6 +1501,60 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
         }
     }
 
+    // Collect Global Struct Definitions
+    for (int i = 0; i < ast->child_count; i++) {
+        if (ast->children[i]->type == AST_STRUCT_DEF || ast->children[i]->type == AST_UNION_DEF) {
+            bool is_union = (ast->children[i]->type == AST_UNION_DEF);
+            StructDef *def = malloc(sizeof(StructDef));
+            def->name = strdup(ast->children[i]->value);
+            def->size = 0;
+            def->is_union = is_union;
+            def->members = NULL;
+            StructMember *last_mem = NULL;
+
+            for (int j = 0; j < ast->children[i]->child_count; j++) {
+                ASTNode *mem_node = ast->children[i]->children[j];
+                StructMember *mem = malloc(sizeof(StructMember));
+                
+                int p_level = 0;
+                const char *vname = mem_node->value;
+                while (*vname == '*') { p_level++; vname++; }
+                
+                mem->name = strdup(vname);
+                mem->pointer_level = p_level;
+                mem->array_size = mem_node->array_size;
+                mem->is_16bit = (mem_node->datatype == 2) || (p_level > 0);
+                mem->struct_name = mem_node->struct_name ? strdup(mem_node->struct_name) : NULL;
+                
+                int item_size = 1;
+                if (mem->struct_name && p_level == 0) {
+                    StructDef *sdef = find_struct(mem->struct_name);
+                    if (sdef) item_size = sdef->size;
+                } else if (mem->is_16bit) {
+                    item_size = 2;
+                }
+                
+                int count = mem->array_size > 0 ? mem->array_size : 1;
+                mem->size = item_size * count;
+                
+                if (is_union) {
+                    mem->offset = 0;
+                    if (mem->size > def->size) def->size = mem->size;
+                } else {
+                    mem->offset = def->size;
+                    def->size += mem->size;
+                }
+                mem->next = NULL;
+
+                if (!def->members) def->members = mem;
+                else last_mem->next = mem;
+                last_mem = mem;
+            }
+            def->next = compiler->structs;
+            compiler->structs = def;
+        }
+    }
+
     // Collect global variables
     for (int i = 0; i < ast->child_count; i++) {
         if (ast->children[i]->type == AST_VARDECL) {
@@ -1328,7 +1563,7 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
             while (*var_name == '*') { pointer_level++; var_name++; }
             bool is_16bit = (ast->children[i]->datatype == 2) || (pointer_level > 0);
             bool target_is_16bit = (ast->children[i]->datatype == 2);
-            add_symbol(compiler->symtab, var_name, true, pointer_level, is_16bit, target_is_16bit, ast->children[i]->array_size, false, false, ast->children[i]->initializer_value);
+            add_symbol(compiler->symtab, var_name, true, pointer_level, is_16bit, target_is_16bit, ast->children[i]->array_size, false, false, ast->children[i], ast->children[i]->struct_name);
         }
     }
 
@@ -1430,15 +1665,11 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
     Symbol *gsym = compiler->symtab->symbols;
     while (gsym) {
         if (gsym->is_global) {
-            if (gsym->initializer_value) {
-                if (gsym->is_16bit) {
-                    emit("%s:\tDW %s\t; global initialized\n", gsym->name, gsym->initializer_value);
-                } else {
-                    emit("%s:\tDB %s\t; global initialized\n", gsym->name, gsym->initializer_value);
-                }
+            if (gsym->decl_node && gsym->decl_node->child_count > 0) {
+                emit("%s:\t; global initialized\n", gsym->name);
+                emit_static_data(gsym);
             } else {
-                int size = (gsym->is_16bit || gsym->is_pointer ? 2 : 1) * (gsym->array_size > 0 ? gsym->array_size : 1);
-                emit("%s:\tDS %d\t; global variable\n", gsym->name, size);
+                emit("%s:\tDS %d\t; global variable\n", gsym->name, gsym->total_size);
             }
         }
         gsym = gsym->next;

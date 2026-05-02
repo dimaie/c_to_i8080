@@ -18,7 +18,7 @@ ASTNode* create_node(ASTNodeType type, const char *value) {
     node->type = type;
     node->value = value ? strdup(value) : NULL;
     node->datatype = 2; // Default to 16-bit
-    node->initializer_value = NULL;
+    node->struct_name = NULL;
     node->array_size = 0;
     node->is_reg = false;
     node->is_static = false;
@@ -42,7 +42,7 @@ void free_ast(ASTNode *node) {
     for (int i = 0; i < node->child_count; i++) {
         free_ast(node->children[i]);
     }
-    free(node->initializer_value);
+    free(node->struct_name);
     free(node->children);
     free(node->value);
     free(node);
@@ -120,6 +120,10 @@ static const char* token_type_to_string(int type) {
         case TOK_CASE: return "'case'";
         case TOK_DEFAULT: return "'default'";
         case TOK_COLON: return "':'";
+        case TOK_STRUCT: return "'struct'";
+        case TOK_UNION: return "'union'";
+        case TOK_DOT: return "'.'";
+        case TOK_ARROW: return "'->'";
         default: return "unknown";
     }
 }
@@ -148,26 +152,6 @@ static ASTNode* parse_primary() {
     }
     if (match(TOK_IDENT)) {
         Token *tok = next();
-        if (match(TOK_LPAREN)) {
-            // Function call
-            next(); // consume '('
-            ASTNode *call = create_node(AST_CALL, tok->value);
-            if (!match(TOK_RPAREN)) {
-                add_child(call, parse_expression());
-                while (match(TOK_COMMA)) {
-                    next();
-                    add_child(call, parse_expression());
-                }
-            }
-            expect(TOK_RPAREN);
-            return call;
-        } else if (match(TOK_LBRACKET)) {
-            next(); // consume '['
-            ASTNode *access = create_node(AST_ARRAY_ACCESS, tok->value);
-            add_child(access, parse_expression());
-            expect(TOK_RBRACKET);
-            return access;
-        }
         return create_node(AST_IDENT, tok->value);
     }
     if (match(TOK_LPAREN)) {
@@ -182,11 +166,19 @@ static ASTNode* parse_primary() {
 
 static ASTNode* parse_postfix() {
     ASTNode *left = parse_primary();
-    while (match(TOK_INC) || match(TOK_DEC) || match(TOK_LPAREN)) {
+    while (match(TOK_INC) || match(TOK_DEC) || match(TOK_LPAREN) || match(TOK_LBRACKET) || match(TOK_DOT) || match(TOK_ARROW)) {
         if (match(TOK_LPAREN)) {
             next();
-            ASTNode *call = create_node(AST_INDIRECT_CALL, NULL);
-            add_child(call, left);
+            ASTNode *call;
+            if (left->type == AST_IDENT) {
+                char *func_name = strdup(left->value);
+                free_ast(left);
+                call = create_node(AST_CALL, func_name);
+                free(func_name);
+            } else {
+                call = create_node(AST_INDIRECT_CALL, NULL);
+                add_child(call, left);
+            }
             if (!match(TOK_RPAREN)) {
                 add_child(call, parse_expression());
                 while (match(TOK_COMMA)) {
@@ -196,6 +188,25 @@ static ASTNode* parse_postfix() {
             }
             expect(TOK_RPAREN);
             left = call;
+        } else if (match(TOK_LBRACKET)) {
+            next();
+            ASTNode *access = create_node(AST_ARRAY_ACCESS, NULL);
+            add_child(access, left);
+            add_child(access, parse_expression());
+            expect(TOK_RBRACKET);
+            left = access;
+        } else if (match(TOK_DOT)) {
+            next();
+            Token *member = expect(TOK_IDENT);
+            ASTNode *node = create_node(AST_MEMBER_ACCESS, member->value);
+            add_child(node, left);
+            left = node;
+        } else if (match(TOK_ARROW)) {
+            next();
+            Token *member = expect(TOK_IDENT);
+            ASTNode *node = create_node(AST_PTR_MEMBER_ACCESS, member->value);
+            add_child(node, left);
+            left = node;
         } else {
             Token *op = next();
             ASTNodeType type = (strcmp(op->value, "++") == 0) ? AST_POST_INC : AST_POST_DEC;
@@ -435,92 +446,36 @@ static Token* parse_declarator(int *pointer_level, bool *is_func_ptr) {
 static void parse_initializer(ASTNode *vardecl, bool is_static, bool is_array) {
     if (match(TOK_LBRACE)) {
         next();
-        if (is_static) {
-            char init_buf[4096] = {0};
-            int count = 0;
-            while (!match(TOK_RBRACE) && !match(TOK_EOF)) {
-                ASTNode *init_expr = parse_expression();
-                if (init_expr->type == AST_NUMBER) {
-                    if (count > 0) strcat(init_buf, ",");
-                    strcat(init_buf, init_expr->value);
-                } else if (init_expr->type == AST_UNARY_OP && strcmp(init_expr->value, "-") == 0 && init_expr->children[0]->type == AST_NUMBER) {
-                    if (count > 0) strcat(init_buf, ",");
-                    strcat(init_buf, "-");
-                    strcat(init_buf, init_expr->children[0]->value);
-                } else {
-                    fprintf(stderr, "Error: Static arrays must be initialized with constant numbers at line %d\n", peek()->line);
-                    exit(1);
-                }
-                free_ast(init_expr);
-                count++;
-                if (match(TOK_COMMA)) next();
-                else break;
+        int brace_depth = 1;
+        while (brace_depth > 0 && !match(TOK_EOF)) {
+            if (match(TOK_LBRACE)) {
+                brace_depth++;
+                next();
+                continue;
             }
-            expect(TOK_RBRACE);
-            if (vardecl->array_size == 0) vardecl->array_size = count;
-            else {
-                while (count < vardecl->array_size) {
-                    if (count > 0) strcat(init_buf, ",");
-                    strcat(init_buf, "0");
-                    count++;
-                }
+            if (match(TOK_RBRACE)) {
+                brace_depth--;
+                next();
+                if (brace_depth > 0 && match(TOK_COMMA)) next();
+                continue;
             }
-            vardecl->initializer_value = strdup(init_buf);
-        } else {
-            int count = 0;
-            while (!match(TOK_RBRACE) && !match(TOK_EOF)) {
-                ASTNode *init_expr = parse_expression();
-                add_child(vardecl, init_expr);
-                count++;
-                if (match(TOK_COMMA)) next();
-                else break;
-            }
-            expect(TOK_RBRACE);
-            if (vardecl->array_size == 0) vardecl->array_size = count;
+            
+            ASTNode *init_expr = parse_expression();
+            add_child(vardecl, init_expr);
+            
+            if (brace_depth > 0 && match(TOK_COMMA)) next();
         }
     } else {
         ASTNode *init_expr = parse_expression();
         if (is_array && init_expr->type == AST_STRING) {
             int len = strlen(init_expr->value);
-            if (vardecl->array_size == 0) vardecl->array_size = len + 1;
-            if (is_static) {
-                char init_buf[4096] = {0};
-                for (int i = 0; i < len; i++) {
-                    char num[16];
-                    sprintf(num, "%d,", (unsigned char)init_expr->value[i]);
-                    strcat(init_buf, num);
-                }
-                strcat(init_buf, "0");
-                int count = len + 1;
-                while (count < vardecl->array_size) {
-                    strcat(init_buf, ",0");
-                    count++;
-                }
-                vardecl->initializer_value = strdup(init_buf);
-            } else {
-                for (int i = 0; i < len; i++) {
-                    char num[16];
-                    sprintf(num, "%d", (unsigned char)init_expr->value[i]);
-                    add_child(vardecl, create_node(AST_NUMBER, num));
-                }
-                add_child(vardecl, create_node(AST_NUMBER, "0"));
+            if (vardecl->array_size == -1) vardecl->array_size = len + 1;
+            for (int i = 0; i < len; i++) {
+                char num[16];
+                sprintf(num, "%d", (unsigned char)init_expr->value[i]);
+                add_child(vardecl, create_node(AST_NUMBER, num));
             }
-            free_ast(init_expr);
-        } else if (is_static) {
-            if (init_expr->type == AST_NUMBER) {
-                vardecl->initializer_value = strdup(init_expr->value);
-            } else if (init_expr->type == AST_UNARY_OP && strcmp(init_expr->value, "-") == 0 && init_expr->children[0]->type == AST_NUMBER) {
-                char buffer[32];
-                sprintf(buffer, "-%s", init_expr->children[0]->value);
-                vardecl->initializer_value = strdup(buffer);
-            } else if (init_expr->type == AST_IDENT) {
-                vardecl->initializer_value = strdup(init_expr->value);
-            } else if (init_expr->type == AST_ADDROF && init_expr->children[0]->type == AST_IDENT) {
-                vardecl->initializer_value = strdup(init_expr->children[0]->value);
-            } else {
-                fprintf(stderr, "Error: Static variables must be initialized with constant numbers or function names at line %d\n", peek()->line);
-                exit(1);
-            }
+            add_child(vardecl, create_node(AST_NUMBER, "0"));
             free_ast(init_expr);
         } else {
             add_child(vardecl, init_expr);
@@ -550,19 +505,28 @@ static ASTNode* parse_statement() {
     }
 
     // Variable declaration
-    if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR) || match(TOK_VOID)) {
+    bool is_struct = false;
+    char *sname = NULL;
+    if (match(TOK_STRUCT) || match(TOK_UNION)) {
+        is_struct = true;
+        next();
+        sname = expect(TOK_IDENT)->value;
+    }
+    if (is_struct || match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR) || match(TOK_VOID)) {
         bool target_16bit = true;
-        if (match(TOK_SHORT)) {
-            next();
-            if (match(TOK_INT)) next(); // optional "short int"
-        } else if (match(TOK_CHAR)) {
-            target_16bit = false;
-            next();
-        } else if (match(TOK_VOID)) {
-            target_16bit = true;
-            next();
-        } else {
-            next();
+        if (!is_struct) {
+            if (match(TOK_SHORT)) {
+                next();
+                if (match(TOK_INT)) next(); // optional "short int"
+            } else if (match(TOK_CHAR)) {
+                target_16bit = false;
+                next();
+            } else if (match(TOK_VOID)) {
+                target_16bit = true;
+                next();
+            } else {
+                next();
+            }
         }
         
         bool is_array_prefix = false;
@@ -584,6 +548,7 @@ static ASTNode* parse_statement() {
         vardecl->datatype = target_16bit ? 2 : 1;
         vardecl->is_reg = is_reg;
         vardecl->is_static = is_static;
+        vardecl->struct_name = sname ? strdup(sname) : NULL;
         if (pointer_level > 0) {
             char *ptr_name = malloc(strlen(name->value) + pointer_level + 1);
             ptr_name[0] = '\0';
@@ -603,6 +568,7 @@ static ASTNode* parse_statement() {
             }
             expect(TOK_RBRACKET);
         }
+        if (is_array && vardecl->array_size == 0) vardecl->array_size = -1;
         if (match(TOK_ASSIGN)) {
             next();
             parse_initializer(vardecl, is_static, is_array);
@@ -754,20 +720,30 @@ static ASTNode* parse_statement() {
             next();
         }
 
+        bool is_for_struct = false;
+        char *for_sname = NULL;
+        if (match(TOK_STRUCT) || match(TOK_UNION)) {
+            is_for_struct = true;
+            next();
+            for_sname = expect(TOK_IDENT)->value;
+        }
+
         // Initialization (can be variable declaration or expression)
-        if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR) || match(TOK_VOID)) {
+        if (is_for_struct || match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR) || match(TOK_VOID)) {
             bool target_16bit = true;
-            if (match(TOK_SHORT)) {
-                next();
-                if (match(TOK_INT)) next(); // optional "short int"
-            } else if (match(TOK_CHAR)) {
-                target_16bit = false;
-                next();
-            } else if (match(TOK_VOID)) {
-                target_16bit = true;
-                next();
-            } else {
-                next();
+            if (!is_for_struct) {
+                if (match(TOK_SHORT)) {
+                    next();
+                    if (match(TOK_INT)) next(); // optional "short int"
+                } else if (match(TOK_CHAR)) {
+                    target_16bit = false;
+                    next();
+                } else if (match(TOK_VOID)) {
+                    target_16bit = true;
+                    next();
+                } else {
+                    next();
+                }
             }
 
             bool is_array_prefix = false;
@@ -789,6 +765,7 @@ static ASTNode* parse_statement() {
             vardecl->datatype = target_16bit ? 2 : 1;
             vardecl->is_reg = is_for_reg;
             vardecl->is_static = is_for_static;
+            vardecl->struct_name = for_sname ? strdup(for_sname) : NULL;
             if (pointer_level > 0) {
                 char *ptr_name = malloc(strlen(name->value) + pointer_level + 1);
                 ptr_name[0] = '\0';
@@ -808,6 +785,7 @@ static ASTNode* parse_statement() {
                 }
                 expect(TOK_RBRACKET);
             }
+            if (is_array && vardecl->array_size == 0) vardecl->array_size = -1;
             if (match(TOK_ASSIGN)) {
                 next();
                 parse_initializer(vardecl, is_for_static, is_array);
@@ -863,23 +841,92 @@ static ASTNode* parse_statement() {
 }
 
 static ASTNode* parse_top_level() {
+    if ((match(TOK_STRUCT) || match(TOK_UNION)) && (peek() + 1)->type == TOK_IDENT && (peek() + 2)->type == TOK_LBRACE) {
+        bool is_union = match(TOK_UNION);
+        next(); // consume struct or union
+        Token *name = next();
+        next(); // consume {
+        ASTNode *sdef = create_node(is_union ? AST_UNION_DEF : AST_STRUCT_DEF, name->value);
+        while (!match(TOK_RBRACE) && !match(TOK_EOF)) {
+            bool is_sub = false;
+            char *sub_sname = NULL;
+            bool target_16bit = true;
+            if (match(TOK_STRUCT) || match(TOK_UNION)) {
+                is_sub = true;
+                next();
+                sub_sname = expect(TOK_IDENT)->value;
+            } else if (match(TOK_SHORT)) { 
+                next(); if (match(TOK_INT)) next(); 
+            } else if (match(TOK_CHAR)) { 
+                target_16bit = false; next(); 
+            } else if (match(TOK_VOID)) { 
+                target_16bit = true; next(); 
+            } else { 
+                expect(TOK_INT); 
+            }
+
+            bool is_array_prefix = false;
+            int prefix_size = 0;
+            if (match(TOK_LBRACKET)) {
+                is_array_prefix = true; next();
+                if (match(TOK_NUMBER)) prefix_size = atoi(next()->value);
+                expect(TOK_RBRACKET);
+            }
+
+            int p_level = 0;
+            Token *mname = parse_declarator(&p_level, NULL);
+            ASTNode *mem = create_node(AST_VARDECL, mname->value);
+            mem->datatype = target_16bit ? 2 : 1;
+            mem->struct_name = sub_sname ? strdup(sub_sname) : NULL;
+            if (p_level > 0) {
+                char *pname = malloc(strlen(mname->value) + p_level + 1);
+                pname[0] = '\0';
+                for(int i=0; i<p_level; i++) strcat(pname, "*");
+                strcat(pname, mname->value);
+                free(mem->value);
+                mem->value = pname;
+            }
+            mem->array_size = prefix_size;
+            if (match(TOK_LBRACKET)) {
+                next();
+                if (match(TOK_NUMBER)) mem->array_size = atoi(next()->value);
+                expect(TOK_RBRACKET);
+            }
+            expect(TOK_SEMICOLON);
+            add_child(sdef, mem);
+        }
+        expect(TOK_RBRACE);
+        expect(TOK_SEMICOLON);
+        return sdef;
+    }
+
+    bool is_struct = false;
+    char *sname = NULL;
+    if (match(TOK_STRUCT) || match(TOK_UNION)) {
+        is_struct = true;
+        next();
+        sname = expect(TOK_IDENT)->value;
+    }
+
     // Return type or global variable type
-    if (!match(TOK_INT) && !match(TOK_SHORT) && !match(TOK_CHAR) && !match(TOK_VOID)) {
+    if (!is_struct && !match(TOK_INT) && !match(TOK_SHORT) && !match(TOK_CHAR) && !match(TOK_VOID)) {
         return NULL;
     }
     
     bool target_16bit = true;
-    if (match(TOK_SHORT)) {
-        next();
-        if (match(TOK_INT)) next(); // optional "short int"
-    } else if (match(TOK_CHAR)) {
-        target_16bit = false;
-        next();
-    } else if (match(TOK_VOID)) {
-        target_16bit = true;
-        next();
-    } else {
-        next();
+    if (!is_struct) {
+        if (match(TOK_SHORT)) {
+            next();
+            if (match(TOK_INT)) next(); // optional "short int"
+        } else if (match(TOK_CHAR)) {
+            target_16bit = false;
+            next();
+        } else if (match(TOK_VOID)) {
+            target_16bit = true;
+            next();
+        } else {
+            next();
+        }
     }
     
     bool is_array_prefix = false;
@@ -893,6 +940,7 @@ static ASTNode* parse_top_level() {
         }
         expect(TOK_RBRACKET);
     }
+    if (is_array_prefix && prefix_array_size == 0) prefix_array_size = -1;
     
     int pointer_level = 0;
     bool is_func_ptr = false;
@@ -908,19 +956,28 @@ static ASTNode* parse_top_level() {
                 is_param_reg = true;
                 next();
             }
-            if (match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR) || match(TOK_VOID)) {
+            bool is_p_struct = false;
+            char *p_sname = NULL;
+            if (match(TOK_STRUCT) || match(TOK_UNION)) {
+                is_p_struct = true;
+                next();
+                p_sname = expect(TOK_IDENT)->value;
+            }
+            if (is_p_struct || match(TOK_INT) || match(TOK_SHORT) || match(TOK_CHAR) || match(TOK_VOID)) {
                 bool p_target_16bit = true;
-                if (match(TOK_SHORT)) {
-                    next();
-                    if (match(TOK_INT)) next(); // optional "short int"
-                } else if (match(TOK_CHAR)) {
-                    p_target_16bit = false;
-                    next();
-                } else if (match(TOK_VOID)) {
-                    p_target_16bit = true;
-                    next();
-                } else {
-                    next();
+                if (!is_p_struct) {
+                    if (match(TOK_SHORT)) {
+                        next();
+                        if (match(TOK_INT)) next(); // optional "short int"
+                    } else if (match(TOK_CHAR)) {
+                        p_target_16bit = false;
+                        next();
+                    } else if (match(TOK_VOID)) {
+                        p_target_16bit = true;
+                        next();
+                    } else {
+                        next();
+                    }
                 }
 
                 bool is_p_array_prefix = false;
@@ -937,6 +994,7 @@ static ASTNode* parse_top_level() {
                 ASTNode *param = create_node(AST_VARDECL, pname->value);
                 param->datatype = p_target_16bit ? 2 : 1;
                 param->is_reg = is_param_reg;
+                param->struct_name = p_sname ? strdup(p_sname) : NULL;
                 if (p_pointer_level > 0) {
                     char *ptr_name = malloc(strlen(pname->value) + p_pointer_level + 1);
                     ptr_name[0] = '\0';
@@ -975,6 +1033,7 @@ static ASTNode* parse_top_level() {
         // It is a global variable
         ASTNode *vardecl = create_node(AST_VARDECL, name->value);
         vardecl->datatype = target_16bit ? 2 : 1;
+        vardecl->struct_name = sname ? strdup(sname) : NULL;
         if (pointer_level > 0) {
             char *ptr_name = malloc(strlen(name->value) + pointer_level + 1);
             ptr_name[0] = '\0';
@@ -994,6 +1053,7 @@ static ASTNode* parse_top_level() {
             }
             expect(TOK_RBRACKET);
         }
+        if (is_array && vardecl->array_size == 0) vardecl->array_size = -1;
         if (match(TOK_ASSIGN)) {
             next();
             parse_initializer(vardecl, true, is_array);

@@ -18,7 +18,7 @@
 // Token types
 typedef enum {
     TOK_EOF,
-    TOK_INT, TOK_SHORT, TOK_CHAR, TOK_VOID, TOK_RETURN, TOK_IF, TOK_ELSE, TOK_WHILE, TOK_FOR, TOK_DO, TOK_ASM, TOK_BREAK, TOK_REG, TOK_STATIC, TOK_CONTINUE, TOK_GOTO,
+    TOK_INT, TOK_SHORT, TOK_CHAR, TOK_VOID, TOK_RETURN, TOK_IF, TOK_ELSE, TOK_WHILE, TOK_FOR, TOK_DO, TOK_ASM, TOK_BREAK, TOK_REG, TOK_STATIC, TOK_CONTINUE, TOK_GOTO, TOK_STRUCT, TOK_UNION, TOK_DOT, TOK_ARROW,
     TOK_IDENT, TOK_NUMBER, TOK_STRING,
     TOK_LPAREN, TOK_RPAREN, TOK_LBRACE, TOK_RBRACE, TOK_LBRACKET, TOK_RBRACKET,
     TOK_SEMICOLON, TOK_COMMA,
@@ -69,14 +69,18 @@ typedef enum {
     AST_BREAK,      // break;
     AST_CONTINUE,   // continue;
     AST_GOTO,       // goto label;
-    AST_LABEL       // label:
+    AST_LABEL,      // label:
+    AST_STRUCT_DEF, // struct definition
+    AST_UNION_DEF,  // union definition
+    AST_MEMBER_ACCESS, // a.b
+    AST_PTR_MEMBER_ACCESS // a->b
 } ASTNodeType;
 
 typedef struct ASTNode {
     ASTNodeType type;
     char *value;
     int datatype;     // 1 for 8-bit, 2 for 16-bit
-    char *initializer_value; // For static initializers
+    char *struct_name; // Associated struct type
     int array_size;   // Size of the array (0 if not an array)
     bool is_reg;      // True if variable is declared with the 'reg' keyword
     bool is_static;   // True if variable is declared with the 'static' keyword
@@ -85,6 +89,26 @@ typedef struct ASTNode {
     int child_count;
     int child_capacity;
 } ASTNode;
+
+// Struct definitions
+typedef struct StructMember {
+    char *name;
+    int size;
+    int offset;
+    bool is_16bit;
+    int pointer_level;
+    int array_size;
+    char *struct_name;
+    struct StructMember *next;
+} StructMember;
+
+typedef struct StructDef {
+    char *name;
+    int size;
+    bool is_union;
+    StructMember *members;
+    struct StructDef *next;
+} StructDef;
 
 // Symbol table
 typedef struct Symbol {
@@ -95,8 +119,10 @@ typedef struct Symbol {
     int pointer_level; // Number of pointer indirections
     bool is_16bit;    // True for int/pointers, False for short/char
     bool target_is_16bit; // True for int pointer/array, False for char pointer/array
+    char *struct_name; // Associated struct type
+    int total_size;    // Total byte size in memory
     int array_size;   // Size of the array (0 if not an array)
-    char *initializer_value; // For static initializers
+    struct ASTNode *decl_node; // Associated declaration AST node
     bool is_reg;      // True if variable is allocated to a hardware register
     bool is_static;   // True if variable is statically allocated
     struct Symbol *next;
@@ -126,6 +152,7 @@ typedef struct {
     int current_break_label; // Label to jump to on 'break'
     int current_continue_label; // Label to jump to on 'continue'
     bool uses_bc; // Track if the BC register is used by a local variable
+    StructDef *structs; // Global struct definitions
 } Compiler;
 
 // Lexer functions
@@ -142,7 +169,7 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
 // Utility functions
 ASTNode* create_node(ASTNodeType type, const char *value);
 void add_child(ASTNode *parent, ASTNode *child);
-Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, int pointer_level, bool is_16bit, bool target_is_16bit, int array_size, bool is_reg, bool is_static, const char *initializer_value);
+Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, int pointer_level, bool is_16bit, bool target_is_16bit, int array_size, bool is_reg, bool is_static, ASTNode *decl_node, const char *struct_name);
 Symbol* find_symbol(SymbolTable *symtab, const char *name);
 
 #endif // C_TO_I8080_H

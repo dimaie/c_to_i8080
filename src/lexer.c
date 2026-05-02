@@ -8,7 +8,7 @@
 #endif
 
 static bool is_keyword(const char *str) {
-    const char *keywords[] = {"int", "short", "char", "void", "return", "if", "else", "while", "for", "do", "asm", "break", "continue", "reg", "register", "static", "switch", "case", "default", "goto", NULL};
+    const char *keywords[] = {"int", "short", "char", "void", "return", "if", "else", "while", "for", "do", "asm", "break", "continue", "reg", "register", "static", "switch", "case", "default", "goto", "struct", "union", NULL};
     for (int i = 0; keywords[i]; i++) {
         if (strcmp(str, keywords[i]) == 0) return true;
     }
@@ -36,6 +36,8 @@ static TokenType get_keyword_type(const char *str) {
     if (strcmp(str, "case") == 0) return TOK_CASE;
     if (strcmp(str, "default") == 0) return TOK_DEFAULT;
     if (strcmp(str, "goto") == 0) return TOK_GOTO;
+    if (strcmp(str, "struct") == 0) return TOK_STRUCT;
+    if (strcmp(str, "union") == 0) return TOK_UNION;
     return TOK_IDENT;
 }
 
@@ -348,6 +350,13 @@ Token* tokenize(const char *source, int *token_count) {
             continue;
         }
 
+        if (*p == '-' && *(p + 1) == '>') {
+            tok->type = TOK_ARROW;
+            tok->value = strdup("->");
+            p += 2;
+            continue;
+        }
+
         // Single-character tokens
         tok->value = malloc(2);
         tok->value[0] = *p;
@@ -360,6 +369,7 @@ Token* tokenize(const char *source, int *token_count) {
             case '}': tok->type = TOK_RBRACE; break;
             case '[': tok->type = TOK_LBRACKET; break;
             case ']': tok->type = TOK_RBRACKET; break;
+            case '.': tok->type = TOK_DOT; break;
             case ':': tok->type = TOK_COLON; break;
             case ';': tok->type = TOK_SEMICOLON; break;
             case ',': tok->type = TOK_COMMA; break;
