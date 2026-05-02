@@ -124,6 +124,13 @@ void test_assignment() {
     x -= 3; assert_test(x == 12, "6. Compound Assign (-=)");
     x *= 2; assert_test(x == 24, "6. Compound Assign (*=)");
     x /= 4; assert_test(x == 6,  "6. Compound Assign (/=)");
+    
+    x = 10; x &= 6; assert_test(x == 2, "6. Compound Assign (&=)");
+    x |= 8; assert_test(x == 10, "6. Compound Assign (|=)");
+    x ^= 15; assert_test(x == 5, "6. Compound Assign (^=)");
+    x <<= 2; assert_test(x == 20, "6. Compound Assign (<<=)");
+    x >>= 1; assert_test(x == 10, "6. Compound Assign (>>=)");
+    x %= 3; assert_test(x == 1, "6. Compound Assign (%=)");
 }
 
 void test_comparison() {

@@ -9,16 +9,6 @@ int rand() {
     return seed;
 }
 
-// Safe signed division wrapper
-int divide(int a, int b) {
-    int sign = 0;
-    if (a < 0) { a = -a; sign = sign ^ 1; }
-    if (b < 0) { b = -b; sign = sign ^ 1; }
-    int res = a / b;
-    if (sign) return -res;
-    return res;
-}
-
 int main() {
     int num_stars = 50;
     
@@ -73,8 +63,8 @@ int main() {
             
             // 5. Project 3D to 2D screen coordinates
             // screen_x = (x * FOV) / z + screen_center_x
-            int sx = divide(*px * 64, *pz) + 128;
-            int sy = divide(*py * 64, *pz) + 120;
+            int sx = divide(multiply(*px, 64), *pz) + 128;
+            int sy = divide(multiply(*py, 64), *pz) + 120;
             
             // 6. Draw new star and save coordinates
             if (sx >= 0 && sx < 256 && sy >= 0 && sy < 240) {

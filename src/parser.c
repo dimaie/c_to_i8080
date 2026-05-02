@@ -1,5 +1,18 @@
 #include "c_to_i8080.h"
 
+#ifndef TOK_SWITCH
+#define TOK_SWITCH 1000
+#define TOK_CASE 1001
+#define TOK_DEFAULT 1002
+#define TOK_COLON 1003
+#endif
+
+#ifndef AST_SWITCH
+#define AST_SWITCH 1000
+#define AST_CASE 1001
+#define AST_DEFAULT 1002
+#endif
+
 ASTNode* create_node(ASTNodeType type, const char *value) {
     ASTNode *node = malloc(sizeof(ASTNode));
     node->type = type;
@@ -39,9 +52,81 @@ static Token* current;
 static Token* peek() { return current; }
 static Token* next() { return current++; }
 static bool match(TokenType type) { return peek()->type == type; }
+
+static const char* token_type_to_string(int type) {
+    switch (type) {
+        case TOK_EOF: return "EOF";
+        case TOK_INT: return "'int'";
+        case TOK_SHORT: return "'short'";
+        case TOK_CHAR: return "'char'";
+        case TOK_VOID: return "'void'";
+        case TOK_RETURN: return "'return'";
+        case TOK_IF: return "'if'";
+        case TOK_ELSE: return "'else'";
+        case TOK_WHILE: return "'while'";
+        case TOK_FOR: return "'for'";
+        case TOK_DO: return "'do'";
+        case TOK_ASM: return "'asm'";
+        case TOK_BREAK: return "'break'";
+        case TOK_CONTINUE: return "'continue'";
+        case TOK_REG: return "'reg'";
+        case TOK_STATIC: return "'static'";
+        case TOK_GOTO: return "'goto'";
+        case TOK_IDENT: return "identifier";
+        case TOK_NUMBER: return "number";
+        case TOK_STRING: return "string";
+        case TOK_LPAREN: return "'('";
+        case TOK_RPAREN: return "')'";
+        case TOK_LBRACE: return "'{'";
+        case TOK_RBRACE: return "'}'";
+        case TOK_LBRACKET: return "'['";
+        case TOK_RBRACKET: return "']'";
+        case TOK_SEMICOLON: return "';'";
+        case TOK_COMMA: return "','";
+        case TOK_ASSIGN: return "'='";
+        case TOK_PLUS_ASSIGN: return "'+='";
+        case TOK_MINUS_ASSIGN: return "'-='";
+        case TOK_STAR_ASSIGN: return "'*='";
+        case TOK_SLASH_ASSIGN: return "'/='";
+        case TOK_AND_ASSIGN: return "'&='";
+        case TOK_OR_ASSIGN: return "'|='";
+        case TOK_XOR_ASSIGN: return "'^='";
+        case TOK_SHL_ASSIGN: return "'<<='";
+        case TOK_SHR_ASSIGN: return "'>>='";
+        case TOK_MOD_ASSIGN: return "'%='";
+        case TOK_PLUS: return "'+'";
+        case TOK_MINUS: return "'-'";
+        case TOK_STAR: return "'*'";
+        case TOK_SLASH: return "'/'";
+        case TOK_PERCENT: return "'%'";
+        case TOK_INC: return "'++'";
+        case TOK_DEC: return "'--'";
+        case TOK_EQ: return "'=='";
+        case TOK_NE: return "'!='";
+        case TOK_LT: return "'<'";
+        case TOK_LE: return "'<='";
+        case TOK_GT: return "'>'";
+        case TOK_GE: return "'>='";
+        case TOK_AND: return "'&&'";
+        case TOK_OR: return "'||'";
+        case TOK_NOT: return "'!'";
+        case TOK_AMPERSAND: return "'&'";
+        case TOK_PIPE: return "'|'";
+        case TOK_CARET: return "'^'";
+        case TOK_TILDE: return "'~'";
+        case TOK_SHL: return "'<<'";
+        case TOK_SHR: return "'>>'";
+        case TOK_SWITCH: return "'switch'";
+        case TOK_CASE: return "'case'";
+        case TOK_DEFAULT: return "'default'";
+        case TOK_COLON: return "':'";
+        default: return "unknown";
+    }
+}
+
 static Token* expect(TokenType type) {
     if (!match(type)) {
-        fprintf(stderr, "Expected token type %d but got %d at line %d\n", type, peek()->type, peek()->line);
+        fprintf(stderr, "Expected %s but got %s at line %d\n", token_type_to_string(type), token_type_to_string(peek()->type), peek()->line);
         exit(1);
     }
     return next();
@@ -279,7 +364,10 @@ static ASTNode* parse_logical_or() {
 
 static ASTNode* parse_assignment() {
     ASTNode *left = parse_logical_or();
-    if (match(TOK_ASSIGN) || match(TOK_PLUS_ASSIGN) || match(TOK_MINUS_ASSIGN) || match(TOK_STAR_ASSIGN) || match(TOK_SLASH_ASSIGN)) {
+    if (match(TOK_ASSIGN) || match(TOK_PLUS_ASSIGN) || match(TOK_MINUS_ASSIGN) || 
+        match(TOK_STAR_ASSIGN) || match(TOK_SLASH_ASSIGN) || match(TOK_MOD_ASSIGN) ||
+        match(TOK_AND_ASSIGN) || match(TOK_OR_ASSIGN) || match(TOK_XOR_ASSIGN) ||
+        match(TOK_SHL_ASSIGN) || match(TOK_SHR_ASSIGN)) {
         Token *op = next();
         ASTNode *node;
         if (op->type == TOK_ASSIGN) {
@@ -290,6 +378,12 @@ static ASTNode* parse_assignment() {
             else if (op->type == TOK_MINUS_ASSIGN) op_val = "-";
             else if (op->type == TOK_STAR_ASSIGN) op_val = "*";
             else if (op->type == TOK_SLASH_ASSIGN) op_val = "/";
+            else if (op->type == TOK_MOD_ASSIGN) op_val = "%";
+            else if (op->type == TOK_AND_ASSIGN) op_val = "&";
+            else if (op->type == TOK_OR_ASSIGN) op_val = "|";
+            else if (op->type == TOK_XOR_ASSIGN) op_val = "^";
+            else if (op->type == TOK_SHL_ASSIGN) op_val = "<<";
+            else if (op->type == TOK_SHR_ASSIGN) op_val = ">>";
             node = create_node(AST_COMPOUND_ASSIGN, op_val);
         }
         add_child(node, left);
@@ -303,19 +397,20 @@ static ASTNode* parse_expression() {
     return parse_assignment();
 }
 
-static Token* parse_declarator(bool *is_pointer, bool *is_func_ptr) {
+static Token* parse_declarator(int *pointer_level, bool *is_func_ptr) {
     Token *name = NULL;
-    *is_pointer = false;
+    *pointer_level = 0;
     if (is_func_ptr) *is_func_ptr = false;
     
-    if (match(TOK_STAR)) {
-        *is_pointer = true;
+    while (match(TOK_STAR)) {
+        (*pointer_level)++;
         next();
-        name = expect(TOK_IDENT);
-    } else if (match(TOK_LPAREN)) {
+    }
+    
+    if (match(TOK_LPAREN)) {
         next(); // '('
-        if (match(TOK_STAR)) {
-            *is_pointer = true;
+        while (match(TOK_STAR)) {
+            (*pointer_level)++;
             if (is_func_ptr) *is_func_ptr = true;
             next();
         }
@@ -482,17 +577,18 @@ static ASTNode* parse_statement() {
             expect(TOK_RBRACKET);
         }        
         
-        bool is_pointer = false;
-        Token *name = parse_declarator(&is_pointer, NULL);
+        int pointer_level = 0;
+        Token *name = parse_declarator(&pointer_level, NULL);
         
         ASTNode *vardecl = create_node(AST_VARDECL, name->value);
         vardecl->datatype = target_16bit ? 2 : 1;
         vardecl->is_reg = is_reg;
         vardecl->is_static = is_static;
-        // Store pointer info in the node value (hacky but simple)
-        if (is_pointer) {
-            char *ptr_name = malloc(strlen(name->value) + 2);
-            sprintf(ptr_name, "*%s", name->value);
+        if (pointer_level > 0) {
+            char *ptr_name = malloc(strlen(name->value) + pointer_level + 1);
+            ptr_name[0] = '\0';
+            for (int i = 0; i < pointer_level; i++) strcat(ptr_name, "*");
+            strcat(ptr_name, name->value);
             free(vardecl->value);
             vardecl->value = ptr_name;
         }
@@ -595,6 +691,53 @@ static ASTNode* parse_statement() {
         return do_while;
     }
 
+    // Goto statement
+    if (match(TOK_GOTO)) {
+        next();
+        Token *name = expect(TOK_IDENT);
+        expect(TOK_SEMICOLON);
+        return create_node(AST_GOTO, name->value);
+    }
+
+    // Label statement
+    if (match(TOK_IDENT) && (current + 1)->type == TOK_COLON) {
+        Token *name = next(); // consume ident
+        next(); // consume colon
+        ASTNode *label_node = create_node(AST_LABEL, name->value);
+        add_child(label_node, parse_statement());
+        return label_node;
+    }
+
+    // Switch statement
+    if (match(TOK_SWITCH)) {
+        next();
+        expect(TOK_LPAREN);
+        ASTNode *switch_stmt = create_node(AST_SWITCH, NULL);
+        add_child(switch_stmt, parse_expression());
+        expect(TOK_RPAREN);
+        add_child(switch_stmt, parse_statement());
+        return switch_stmt;
+    }
+
+    // Case label
+    if (match(TOK_CASE)) {
+        next();
+        ASTNode *case_stmt = create_node(AST_CASE, NULL);
+        add_child(case_stmt, parse_expression());
+        expect(TOK_COLON);
+        add_child(case_stmt, parse_statement());
+        return case_stmt;
+    }
+
+    // Default label
+    if (match(TOK_DEFAULT)) {
+        next();
+        expect(TOK_COLON);
+        ASTNode *default_stmt = create_node(AST_DEFAULT, NULL);
+        add_child(default_stmt, parse_statement());
+        return default_stmt;
+    }
+
     // For statement: for (init; condition; increment) body
     if (match(TOK_FOR)) {
         next();
@@ -639,16 +782,18 @@ static ASTNode* parse_statement() {
                 expect(TOK_RBRACKET);
             }
 
-            bool is_pointer = false;
-            Token *name = parse_declarator(&is_pointer, NULL);
+            int pointer_level = 0;
+            Token *name = parse_declarator(&pointer_level, NULL);
             
             ASTNode *vardecl = create_node(AST_VARDECL, name->value);
             vardecl->datatype = target_16bit ? 2 : 1;
             vardecl->is_reg = is_for_reg;
             vardecl->is_static = is_for_static;
-            if (is_pointer) {
-                char *ptr_name = malloc(strlen(name->value) + 2);
-                sprintf(ptr_name, "*%s", name->value);
+            if (pointer_level > 0) {
+                char *ptr_name = malloc(strlen(name->value) + pointer_level + 1);
+                ptr_name[0] = '\0';
+                for (int i = 0; i < pointer_level; i++) strcat(ptr_name, "*");
+                strcat(ptr_name, name->value);
                 free(vardecl->value);
                 vardecl->value = ptr_name;
             }
@@ -706,6 +851,11 @@ static ASTNode* parse_statement() {
     }
 
     // Expression statement
+    if (match(TOK_SEMICOLON)) {
+        next();
+        return create_node(AST_EXPR_STMT, NULL); // Safe empty statement parsing
+    }
+    
     ASTNode *expr = create_node(AST_EXPR_STMT, NULL);
     add_child(expr, parse_expression());
     expect(TOK_SEMICOLON);
@@ -744,9 +894,9 @@ static ASTNode* parse_top_level() {
         expect(TOK_RBRACKET);
     }
     
-    bool is_pointer = false;
+    int pointer_level = 0;
     bool is_func_ptr = false;
-    Token *name = parse_declarator(&is_pointer, &is_func_ptr);
+    Token *name = parse_declarator(&pointer_level, &is_func_ptr);
 
     if (!is_func_ptr && match(TOK_LPAREN)) {
         // It is a function
@@ -781,15 +931,17 @@ static ASTNode* parse_top_level() {
                     expect(TOK_RBRACKET);
                 }
 
-                bool p_is_pointer = false;
-                Token *pname = parse_declarator(&p_is_pointer, NULL);
+                int p_pointer_level = 0;
+                Token *pname = parse_declarator(&p_pointer_level, NULL);
                 
                 ASTNode *param = create_node(AST_VARDECL, pname->value);
                 param->datatype = p_target_16bit ? 2 : 1;
                 param->is_reg = is_param_reg;
-                if (p_is_pointer) {
-                    char *ptr_name = malloc(strlen(pname->value) + 2);
-                    sprintf(ptr_name, "*%s", pname->value);
+                if (p_pointer_level > 0) {
+                    char *ptr_name = malloc(strlen(pname->value) + p_pointer_level + 1);
+                    ptr_name[0] = '\0';
+                    for (int i = 0; i < p_pointer_level; i++) strcat(ptr_name, "*");
+                    strcat(ptr_name, pname->value);
                     free(param->value);
                     param->value = ptr_name;
                 }
@@ -799,12 +951,10 @@ static ASTNode* parse_top_level() {
                         if (match(TOK_NUMBER)) next(); // Skip optional size
                         expect(TOK_RBRACKET);
                     }
-                    if (!p_is_pointer) {
-                        char *ptr_name = malloc(strlen(pname->value) + 2);
-                        sprintf(ptr_name, "*%s", pname->value);
-                        free(param->value);
-                        param->value = ptr_name;
-                    }
+                    char *ptr_name = malloc(strlen(param->value) + 2);
+                    sprintf(ptr_name, "*%s", param->value);
+                    free(param->value);
+                    param->value = ptr_name;
                 }
                 add_child(func, param);
             } else {
@@ -825,9 +975,11 @@ static ASTNode* parse_top_level() {
         // It is a global variable
         ASTNode *vardecl = create_node(AST_VARDECL, name->value);
         vardecl->datatype = target_16bit ? 2 : 1;
-        if (is_pointer) {
-            char *ptr_name = malloc(strlen(name->value) + 2);
-            sprintf(ptr_name, "*%s", name->value);
+        if (pointer_level > 0) {
+            char *ptr_name = malloc(strlen(name->value) + pointer_level + 1);
+            ptr_name[0] = '\0';
+            for (int i = 0; i < pointer_level; i++) strcat(ptr_name, "*");
+            strcat(ptr_name, name->value);
             free(vardecl->value);
             vardecl->value = ptr_name;
         }

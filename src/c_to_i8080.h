@@ -18,11 +18,12 @@
 // Token types
 typedef enum {
     TOK_EOF,
-    TOK_INT, TOK_SHORT, TOK_CHAR, TOK_VOID, TOK_RETURN, TOK_IF, TOK_ELSE, TOK_WHILE, TOK_FOR, TOK_DO, TOK_ASM, TOK_BREAK, TOK_REG, TOK_STATIC, TOK_CONTINUE,
+    TOK_INT, TOK_SHORT, TOK_CHAR, TOK_VOID, TOK_RETURN, TOK_IF, TOK_ELSE, TOK_WHILE, TOK_FOR, TOK_DO, TOK_ASM, TOK_BREAK, TOK_REG, TOK_STATIC, TOK_CONTINUE, TOK_GOTO,
     TOK_IDENT, TOK_NUMBER, TOK_STRING,
     TOK_LPAREN, TOK_RPAREN, TOK_LBRACE, TOK_RBRACE, TOK_LBRACKET, TOK_RBRACKET,
     TOK_SEMICOLON, TOK_COMMA,
     TOK_ASSIGN, TOK_PLUS_ASSIGN, TOK_MINUS_ASSIGN, TOK_STAR_ASSIGN, TOK_SLASH_ASSIGN,
+    TOK_AND_ASSIGN, TOK_OR_ASSIGN, TOK_XOR_ASSIGN, TOK_SHL_ASSIGN, TOK_SHR_ASSIGN, TOK_MOD_ASSIGN,
     TOK_PLUS, TOK_MINUS, TOK_STAR, TOK_SLASH, TOK_PERCENT, TOK_INC, TOK_DEC,
     TOK_EQ, TOK_NE, TOK_LT, TOK_LE, TOK_GT, TOK_GE,
     TOK_AND, TOK_OR, TOK_NOT,
@@ -66,7 +67,9 @@ typedef enum {
     AST_ADDROF,     // &var (address-of)
     AST_ASM,        // asm { ... } (inline assembly)
     AST_BREAK,      // break;
-    AST_CONTINUE    // continue;
+    AST_CONTINUE,   // continue;
+    AST_GOTO,       // goto label;
+    AST_LABEL       // label:
 } ASTNodeType;
 
 typedef struct ASTNode {
@@ -88,7 +91,8 @@ typedef struct Symbol {
     char *name;
     int address;  // Memory address for variable
     bool is_global;
-    bool is_pointer;  // Whether this variable is a pointer type
+    bool is_pointer;  // True if pointer_level > 0
+    int pointer_level; // Number of pointer indirections
     bool is_16bit;    // True for int/pointers, False for short/char
     bool target_is_16bit; // True for int pointer/array, False for char pointer/array
     int array_size;   // Size of the array (0 if not an array)
@@ -138,7 +142,7 @@ void compile_to_i8080(ASTNode *ast, FILE *output, bool use_frame_pointer, int or
 // Utility functions
 ASTNode* create_node(ASTNodeType type, const char *value);
 void add_child(ASTNode *parent, ASTNode *child);
-Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, bool is_pointer, bool is_16bit, bool target_is_16bit, int array_size, bool is_reg, bool is_static, const char *initializer_value);
+Symbol* add_symbol(SymbolTable *symtab, const char *name, bool is_global, int pointer_level, bool is_16bit, bool target_is_16bit, int array_size, bool is_reg, bool is_static, const char *initializer_value);
 Symbol* find_symbol(SymbolTable *symtab, const char *name);
 
 #endif // C_TO_I8080_H

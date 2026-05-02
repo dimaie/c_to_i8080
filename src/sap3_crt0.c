@@ -123,3 +123,23 @@ void puts_at(int x, int y, char *str) {
     set_cursor_xy(x, y);
     print_string(str);
 }
+
+// Safe signed division wrapper
+int divide(int a, int b) {
+    int sign = 0;
+    if (a < 0) { a = -a; sign = sign ^ 1; }
+    if (b < 0) { b = -b; sign = sign ^ 1; }
+    int res = a / b;
+    if (sign) return -res;
+    return res;
+}
+
+// Safe signed multiplication wrapper using native hardware '*'
+int multiply(int a, int b) {
+    int sign = 0;
+    if (a < 0) { a = -a; sign = sign ^ 1; }
+    if (b < 0) { b = -b; sign = sign ^ 1; }
+    int res = a * b;
+    if (sign) return -res;
+    return res;
+}

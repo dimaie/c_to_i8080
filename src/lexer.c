@@ -1,7 +1,14 @@
 #include "c_to_i8080.h"
 
+#ifndef TOK_SWITCH
+#define TOK_SWITCH 1000
+#define TOK_CASE 1001
+#define TOK_DEFAULT 1002
+#define TOK_COLON 1003
+#endif
+
 static bool is_keyword(const char *str) {
-    const char *keywords[] = {"int", "short", "char", "void", "return", "if", "else", "while", "for", "do", "asm", "break", "continue", "reg", "register", "static", NULL};
+    const char *keywords[] = {"int", "short", "char", "void", "return", "if", "else", "while", "for", "do", "asm", "break", "continue", "reg", "register", "static", "switch", "case", "default", "goto", NULL};
     for (int i = 0; keywords[i]; i++) {
         if (strcmp(str, keywords[i]) == 0) return true;
     }
@@ -25,6 +32,10 @@ static TokenType get_keyword_type(const char *str) {
     if (strcmp(str, "reg") == 0) return TOK_REG;
     if (strcmp(str, "register") == 0) return TOK_REG;
     if (strcmp(str, "static") == 0) return TOK_STATIC;
+    if (strcmp(str, "switch") == 0) return TOK_SWITCH;
+    if (strcmp(str, "case") == 0) return TOK_CASE;
+    if (strcmp(str, "default") == 0) return TOK_DEFAULT;
+    if (strcmp(str, "goto") == 0) return TOK_GOTO;
     return TOK_IDENT;
 }
 
@@ -213,6 +224,20 @@ Token* tokenize(const char *source, int *token_count) {
             continue;
         }
 
+        // Three-character operators
+        if (*p == '<' && *(p + 1) == '<' && *(p + 2) == '=') {
+            tok->type = TOK_SHL_ASSIGN;
+            tok->value = strdup("<<=");
+            p += 3;
+            continue;
+        }
+        if (*p == '>' && *(p + 1) == '>' && *(p + 2) == '=') {
+            tok->type = TOK_SHR_ASSIGN;
+            tok->value = strdup(">>=");
+            p += 3;
+            continue;
+        }
+
         // Two-character operators
         if (*p == '=' && *(p + 1) == '=') {
             tok->type = TOK_EQ;
@@ -298,6 +323,30 @@ Token* tokenize(const char *source, int *token_count) {
             p += 2;
             continue;
         }
+        if (*p == '%' && *(p + 1) == '=') {
+            tok->type = TOK_MOD_ASSIGN;
+            tok->value = strdup("%=");
+            p += 2;
+            continue;
+        }
+        if (*p == '&' && *(p + 1) == '=') {
+            tok->type = TOK_AND_ASSIGN;
+            tok->value = strdup("&=");
+            p += 2;
+            continue;
+        }
+        if (*p == '|' && *(p + 1) == '=') {
+            tok->type = TOK_OR_ASSIGN;
+            tok->value = strdup("|=");
+            p += 2;
+            continue;
+        }
+        if (*p == '^' && *(p + 1) == '=') {
+            tok->type = TOK_XOR_ASSIGN;
+            tok->value = strdup("^=");
+            p += 2;
+            continue;
+        }
 
         // Single-character tokens
         tok->value = malloc(2);
@@ -311,6 +360,7 @@ Token* tokenize(const char *source, int *token_count) {
             case '}': tok->type = TOK_RBRACE; break;
             case '[': tok->type = TOK_LBRACKET; break;
             case ']': tok->type = TOK_RBRACKET; break;
+            case ':': tok->type = TOK_COLON; break;
             case ';': tok->type = TOK_SEMICOLON; break;
             case ',': tok->type = TOK_COMMA; break;
             case '=': tok->type = TOK_ASSIGN; break;

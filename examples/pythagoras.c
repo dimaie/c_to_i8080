@@ -1,23 +1,3 @@
-// Safe signed division wrapper
-int divide(int a, int b) {
-    int sign = 0;
-    if (a < 0) { a = -a; sign = sign ^ 1; }
-    if (b < 0) { b = -b; sign = sign ^ 1; }
-    int res = a / b;
-    if (sign) return -res;
-    return res;
-}
-
-// Safe signed multiplication wrapper using native hardware '*'
-int multiply(int a, int b) {
-    int sign = 0;
-    if (a < 0) { a = -a; sign = sign ^ 1; }
-    if (b < 0) { b = -b; sign = sign ^ 1; }
-    int res = a * b;
-    if (sign) return -res;
-    return res;
-}
-
 // High-speed 128-step Sine Lookup Table (sin * 100)
 int get_sin(int a) {
     a = a & 127;

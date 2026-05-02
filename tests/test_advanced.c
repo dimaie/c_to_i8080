@@ -81,6 +81,30 @@ void test_control_flow() {
         sum += k;
     }
     assert_test(sum == 8, "9. Control Flow: break & continue");
+
+    int g = 0;
+    goto skip_g;
+    g = 100;
+skip_g:
+    g = 1;
+    assert_test(g == 1, "9. Control Flow: goto");
+}
+
+int switch_case_tester(int val) {
+    int out = 0;
+    switch (val) {
+        case 1:
+            out = 10;
+            break;
+        case 2:
+        case 3: // Fallthrough test
+            out = 20;
+            break;
+        default:
+            out = 99;
+            break;
+    }
+    return out;
 }
 
 int factorial(int n) {
@@ -157,6 +181,16 @@ void dead_code_function() {
     unused = unused + 1;
 }
 
+void test_multi_pointers() {
+    char c = 123;
+    char *p1 = &c;
+    char **p2 = &p1;
+    
+    assert_test(**p2 == 123, "14. Multi-level Pointers (**ptr)");
+    **p2 = 45;
+    assert_test(c == 45, "14. Multi-level Pointers Assignment");
+}
+
 // ---------------------------------------------------------
 // Main Execution
 // ---------------------------------------------------------
@@ -175,6 +209,9 @@ int main() {
     wait_for_key();
     
     test_control_flow();
+    assert_test(switch_case_tester(1) == 10, "9. Control Flow: switch (basic match)");
+    assert_test(switch_case_tester(2) == 20 && switch_case_tester(3) == 20, "9. Control Flow: switch (fallthrough)");
+    assert_test(switch_case_tester(50) == 99, "9. Control Flow: switch (default)");
     current_sp = get_sp(); check_sp("test_control_flow"); wait_for_key();
     
     test_recursion();
@@ -188,6 +225,9 @@ int main() {
     
     test_function_pointers();
     current_sp = get_sp(); check_sp("test_function_pointers");
+    
+    test_multi_pointers();
+    current_sp = get_sp(); check_sp("test_multi_pointers");
     
     print_newline();
     print_string("ADVANCED TESTS EXECUTED.");
