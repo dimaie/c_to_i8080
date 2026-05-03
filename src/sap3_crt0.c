@@ -3,7 +3,7 @@
 // 1. Global Assembly Block
 // Overrides the compiler's default origin and stack configurations.
 asm {
-    ORG 2100H        ; Target the SAP-3 Program RAM (0x2000 - 0x3FFF)
+    ORG 2300H        ; Target the SAP-3 Program RAM (0x2000 - 0x3FFF)
     
     CALL main        ; Start the C program using the Monitor's provided stack
     RET              ; Return gracefully to the Monitor CLI
